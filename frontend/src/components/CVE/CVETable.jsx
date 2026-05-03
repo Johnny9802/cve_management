@@ -8,7 +8,66 @@ import {
   MatchBadge,
 } from '../UI/Badge';
 
-export default function CVETable({ data = [], total, page, pages, onPageChange, onRowClick, loading, onAddProduct }) {
+/**
+ * Sortable column header. Visually communicates the current sort order
+ * and toggles asc/desc on click. The arrow is purely decorative — the
+ * accessible name comes from the aria-label.
+ */
+function SortHeader({ field, label, currentSort, currentOrder, onSort, align = 'left' }) {
+  const active = currentSort === field;
+  const indicator = active ? (currentOrder === 'asc' ? '↑' : '↓') : '↕';
+  const indicatorCls = active ? 'opacity-90' : 'opacity-30';
+  const next = active ? (currentOrder === 'asc' ? 'desc' : 'asc') : 'desc';
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th scope="col" className={`px-4 py-2.5 font-medium ${alignCls}`}>
+      <button
+        type="button"
+        onClick={() => onSort(field, next)}
+        aria-label={`Ordina per ${label} (${next === 'asc' ? 'crescente' : 'decrescente'})`}
+        className={`inline-flex items-center gap-1 transition focus:outline-none ${
+          active ? 'text-indigo-300' : 'text-gray-500 hover:text-gray-200'
+        } ${align === 'right' ? 'flex-row-reverse' : ''}`}
+      >
+        {label}
+        <span aria-hidden className={`text-xs ${indicatorCls}`}>{indicator}</span>
+      </button>
+    </th>
+  );
+}
+
+// Field name in the API supports a fixed allowlist; columns with no
+// backend sort just render the label without a sort button.
+const SORTABLE_FIELDS = new Set([
+  'cve_id',
+  'cvss_v3_score',
+  'epss_score',
+  'priority_score',
+  'published_at',
+]);
+
+export default function CVETable({
+  data = [],
+  total,
+  page,
+  pages,
+  onPageChange,
+  onRowClick,
+  loading,
+  onAddProduct,
+  sort = 'priority_score',
+  order = 'desc',
+  onSort,
+}) {
+  const SH = (props) => (
+    <SortHeader
+      currentSort={sort}
+      currentOrder={order}
+      onSort={onSort || (() => {})}
+      {...props}
+    />
+  );
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
@@ -39,7 +98,7 @@ export default function CVETable({ data = [], total, page, pages, onPageChange, 
           {total === 0 && !loading ? (
             <>
               <p className="text-gray-400 text-sm">Nessun CVE nel database locale.</p>
-              <p className="text-gray-600 text-xs">Aggiungi un prodotto per avviare la sincronizzazione, oppure usa <strong className="text-gray-400">Cerca NVD Live</strong> per ricerche in tempo reale.</p>
+              <p className="text-gray-600 text-xs">Aggiungi un prodotto per avviare la sincronizzazione, oppure usa <strong className="text-gray-400">Live Search</strong> per ricerche in tempo reale.</p>
               {onAddProduct && (
                 <button onClick={onAddProduct} className="mt-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg transition">
                   + Aggiungi prodotto
@@ -54,17 +113,18 @@ export default function CVETable({ data = [], total, page, pages, onPageChange, 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-gray-500 border-b border-gray-800">
-                <th scope="col" className="text-left px-4 py-2.5 font-medium">CVE ID</th>
-                <th scope="col" className="text-left px-4 py-2.5 font-medium">Descrizione</th>
-                <th scope="col" className="text-left px-4 py-2.5 font-medium">Severità</th>
-                <th scope="col" className="text-right px-4 py-2.5 font-medium">CVSS</th>
-                <th scope="col" className="text-right px-4 py-2.5 font-medium">EPSS</th>
-                <th scope="col" className="text-right px-4 py-2.5 font-medium">Priority</th>
-                <th scope="col" className="text-left px-4 py-2.5 font-medium">Pubblicato</th>
-                <th scope="col" className="text-center px-4 py-2.5 font-medium">KEV</th>
-                <th scope="col" className="text-center px-4 py-2.5 font-medium">Match</th>
-                <th scope="col" className="text-center px-4 py-2.5 font-medium">Fonte</th>
+              <tr className="text-xs border-b border-gray-800">
+                <SH field="cve_id"        label="CVE ID" />
+                <th scope="col" className="text-left px-4 py-2.5 font-medium text-gray-500">Descrizione</th>
+                {/* "Severità" maps to CVSS bands so we sort by CVSS for stability */}
+                <SH field="cvss_v3_score" label="Severità" />
+                <SH field="cvss_v3_score" label="CVSS"     align="right" />
+                <SH field="epss_score"    label="EPSS"     align="right" />
+                <SH field="priority_score" label="Priority" align="right" />
+                <SH field="published_at"  label="Pubblicato" />
+                <th scope="col" className="text-center px-4 py-2.5 font-medium text-gray-500">KEV</th>
+                <th scope="col" className="text-center px-4 py-2.5 font-medium text-gray-500">Match</th>
+                <th scope="col" className="text-center px-4 py-2.5 font-medium text-gray-500">Fonte</th>
               </tr>
             </thead>
             <tbody>
@@ -123,7 +183,6 @@ export default function CVETable({ data = [], total, page, pages, onPageChange, 
   );
 }
 
-// Visual-only inline progress bar (kept next to the numeric badge).
 function PriorityBar({ score }) {
   const s = parseInt(score) || 0;
   let color = 'bg-blue-600';
@@ -131,10 +190,7 @@ function PriorityBar({ score }) {
   else if (s >= 60) color = 'bg-orange-500';
   else if (s >= 40) color = 'bg-yellow-500';
   return (
-    <div
-      className="w-16 bg-gray-800 rounded-full h-1.5"
-      aria-hidden
-    >
+    <div className="w-16 bg-gray-800 rounded-full h-1.5" aria-hidden>
       <div className={`h-1.5 rounded-full ${color}`} style={{ width: `${s}%` }} />
     </div>
   );

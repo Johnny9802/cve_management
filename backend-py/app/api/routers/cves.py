@@ -147,6 +147,42 @@ async def list_cves(
     base_args: list[Any] = [product_id] if has_product else []
     p = len(base_args) + 1
 
+    # Priority score expression — mirrors compute_priority_score() in
+    # app/models/priority.py. When a finding exists for the current
+    # (product, cve) we use the persisted denormalised score (kept fresh
+    # by exploitability_refresh.py); otherwise we compute it on the fly
+    # from the cves columns so the dashboard never shows zeros.
+    computed_priority_expr = """
+        LEAST(100, GREATEST(0,
+            ROUND(COALESCE(c.epss_score, 0) * 40)::int
+            + CASE
+                WHEN c.severity = 'CRITICAL' OR c.cvss_v3_score >= 9.0 THEN 25
+                WHEN c.severity = 'HIGH'     OR c.cvss_v3_score >= 7.0 THEN 18
+                WHEN c.severity = 'MEDIUM'   OR c.cvss_v3_score >= 4.0 THEN 10
+                WHEN c.severity = 'LOW'
+                  OR (c.cvss_v3_score IS NOT NULL AND c.cvss_v3_score > 0)
+                  OR (c.cvss_v2_score IS NOT NULL AND c.cvss_v2_score > 0) THEN 4
+                ELSE 0
+              END
+            + CASE WHEN c.is_kev THEN 25 ELSE 0 END
+            + CASE
+                WHEN c.published_at >= NOW() - INTERVAL '30 days'  THEN 10
+                WHEN c.published_at >= NOW() - INTERVAL '90 days'  THEN 6
+                WHEN c.published_at >= NOW() - INTERVAL '365 days' THEN 3
+                ELSE 0
+              END
+            + CASE
+                WHEN c.has_nuclei_template = TRUE THEN 8
+                WHEN c.has_public_poc      = TRUE THEN 5
+                ELSE 0
+              END
+        ))::int
+    """
+    if has_product:
+        priority_expr = f"COALESCE(f.priority_score, {computed_priority_expr})"
+    else:
+        priority_expr = computed_priority_expr
+
     conditions: list[str] = []
     if severity:
         conditions.append(f"c.severity = ANY(${p})")
@@ -157,8 +193,10 @@ async def list_cves(
         conditions.append(f"c.epss_score >= ${p}"); base_args.append(min_epss); p += 1
     if max_epss is not None:
         conditions.append(f"c.epss_score <= ${p}"); base_args.append(max_epss); p += 1
-    if min_priority is not None and has_product:
-        conditions.append(f"f.priority_score >= ${p}"); base_args.append(min_priority); p += 1
+    # min_priority filter — works in both modes (with and without
+    # product_id) thanks to the on-the-fly priority expression.
+    if min_priority is not None:
+        conditions.append(f"({priority_expr}) >= ${p}"); base_args.append(int(min_priority)); p += 1
     if year is not None:
         conditions.append(f"EXTRACT(YEAR FROM c.published_at) = ${p}"); base_args.append(year); p += 1
     if keyword:
@@ -170,19 +208,21 @@ async def list_cves(
         p += 2
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    priority_expr = "f.priority_score" if has_product else "NULL::numeric"
+
     order_expr = (
         f"{priority_expr} {sort_dir} NULLS LAST"
         if sort_col == "priority_score"
         else f"c.{sort_col} {sort_dir} NULLS LAST"
     )
-    extra_cols = ", f.match_confidence, f.status AS finding_status, f.assigned_to, f.priority_score" if has_product else ""
+    extra_cols = ", f.match_confidence, f.status AS finding_status, f.assigned_to" if has_product else ""
 
     data_sql = f"""
         SELECT c.cve_id, c.source, c.severity, c.cvss_v3_score, c.cvss_v2_score,
                c.epss_score, c.epss_percentile, c.is_kev,
                c.kev_added_date, c.published_at, c.last_modified_at,
-               c.raw_payload->'descriptions'->0->>'value' AS description
+               c.has_public_poc, c.has_nuclei_template,
+               c.raw_payload->'descriptions'->0->>'value' AS description,
+               {priority_expr} AS priority_score
                {extra_cols}
         FROM cves c {join} {where}
         ORDER BY {order_expr}

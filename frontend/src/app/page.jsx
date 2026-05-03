@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import StatsBar from '../components/Dashboard/StatsBar';
 import SeverityChart from '../components/Dashboard/SeverityChart';
 import TimelineChart from '../components/Dashboard/TimelineChart';
+import UrgentCvesPanel from '../components/Dashboard/UrgentCvesPanel';
 import ProductsGrid from '../components/Products/ProductsGrid';
 import AddProductModal from '../components/Products/AddProductModal';
 import CVEFilters from '../components/CVE/CVEFilters';
@@ -20,6 +21,8 @@ const TABS = [
   { key: 'settings',  label: 'Impostazioni' },
 ];
 
+const DEFAULT_FILTERS = { page: 1, limit: 50, sort: 'priority_score', order: 'desc' };
+
 export default function Home() {
   const [tab, setTab] = useState('dashboard');
   const [stats, setStats] = useState(null);
@@ -27,7 +30,7 @@ export default function Home() {
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [cves, setCves] = useState({ data: [], total: 0, page: 1, pages: 1 });
-  const [filters, setFilters] = useState({ page: 1, limit: 50, sort: 'priority_score', order: 'desc' });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [loadingCves, setLoadingCves] = useState(false);
   const [selectedCve, setSelectedCve] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -35,6 +38,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef(null);
+  const tableRef = useRef(null);
 
   function showToast(msg, ms = 3000) {
     setToast(msg);
@@ -107,6 +111,23 @@ export default function Home() {
     await Promise.all([loadDashboard(), tab === 'dashboard' ? loadCves() : Promise.resolve()]);
   }
 
+  // Called by KPI tiles (Critical / High / KEV / Critical Priority).
+  function handleKpiFilter(patch) {
+    setFilters((f) => ({ ...f, ...patch, page: 1 }));
+    // Smooth-scroll to the table so the click feels intentional.
+    setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  }
+
+  // Called by the "Filtra priority ≥ 80" button on UrgentCvesPanel.
+  function handleFilterCriticalPriority() {
+    handleKpiFilter({ min_priority: '80' });
+  }
+
+  // Called by sortable column headers.
+  function handleSort(field, nextOrder) {
+    setFilters((f) => ({ ...f, sort: field, order: nextOrder, page: 1 }));
+  }
+
   const selectedProductInfo = products.find((p) => p.id === selectedProduct);
   const lastRefreshedLabel = lastRefreshed
     ? `Ultimo aggiornamento: ${lastRefreshed.toLocaleTimeString('it-IT')}`
@@ -149,7 +170,11 @@ export default function Home() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-6 py-6 space-y-6">
-        <StatsBar stats={stats} />
+        <StatsBar
+          stats={stats}
+          activeFilters={filters}
+          onFilter={handleKpiFilter}
+        />
 
         {/* ── DASHBOARD TAB ── */}
         {tab === 'dashboard' && (
@@ -167,9 +192,15 @@ export default function Home() {
             </div>
 
             <div className="lg:col-span-3 space-y-4">
-              <TimelineChart data={timeline} />
+              {/* Action panel — replaces the legacy timeline as primary content */}
+              <UrgentCvesPanel
+                cves={cves.data}
+                loading={loadingCves}
+                onSelectCve={setSelectedCve}
+                onFilterCriticalPriority={handleFilterCriticalPriority}
+              />
 
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3" ref={tableRef}>
                 {selectedProductInfo && (
                   <div className="flex items-center gap-2 text-sm">
                     <span className="text-gray-400">Filtrando per:</span>
@@ -202,10 +233,26 @@ export default function Home() {
                 page={cves.page}
                 pages={cves.pages}
                 loading={loadingCves}
+                sort={filters.sort}
+                order={filters.order}
+                onSort={handleSort}
                 onPageChange={(p) => setFilters((f) => ({ ...f, page: p }))}
                 onRowClick={setSelectedCve}
                 onAddProduct={() => setShowAddModal(true)}
               />
+
+              {/* Legacy 12-month publication trend — moved into a
+                  collapsed details so it does not steal attention from
+                  the action panel above. */}
+              <details className="bg-gray-900 border border-gray-800 rounded-xl group">
+                <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm text-gray-400 hover:text-white select-none">
+                  <span>Trend pubblicazione CVE (ultimi 12 mesi)</span>
+                  <span aria-hidden className="text-xs opacity-60 group-open:rotate-180 transition-transform">▾</span>
+                </summary>
+                <div className="px-4 pb-4">
+                  <TimelineChart data={timeline} />
+                </div>
+              </details>
             </div>
           </div>
         )}
@@ -213,7 +260,7 @@ export default function Home() {
         {/* ── LIVE SEARCH TAB ── */}
         {tab === 'live' && <LiveSearchPanel onSelectCve={setSelectedCve} />}
 
-        {/* ── SETTINGS TAB — mount only when active to avoid wasted hooks ── */}
+        {/* ── SETTINGS TAB ── */}
         {tab === 'settings' && <SettingsPanel active />}
       </main>
 
