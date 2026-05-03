@@ -1,0 +1,11 @@
+name,version,vendor,keyword_nvd
+Apache Log4j,2.14.1,Apache,cpe:2.3:a:apache:log4j:2.14.1:*:*:*:*:*:*:*
+OpenSSL,3.0.1,OpenSSL,cpe:2.3:a:openssl:openssl:3.0.1:*:*:*:*:*:*:*
+nginx,1.18.0,nginx,cpe:2.3:a:nginx:nginx:1.18.0:*:*:*:*:*:*:*
+OpenSSH,8.9p1,OpenBSD,cpe:2.3:a:openbsd:openssh:8.9p1:*:*:*:*:*:*:*
+curl,7.88.1,curl,cpe:2.3:a:haxx:curl:7.88.1:*:*:*:*:*:*:*
+Apache HTTP Server,2.4.54,Apache,cpe:2.3:a:apache:http_server:2.4.54:*:*:*:*:*:*:*
+libssl,1.1.1k,OpenSSL,cpe:2.3:a:openssl:openssl:1.1.1k:*:*:*:*:*:*:*
+Python,3.11.0,Python Software Foundation,cpe:2.3:a:python:python:3.11.0:*:*:*:*:*:*:*
+zlib,1.2.11,,
+Bash,5.1.16,GNU,

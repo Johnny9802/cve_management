@@ -1,0 +1,9 @@
+name,version,vendor,keyword_nvd
+OpenSSL,3.0.1,OpenSSL,cpe:2.3:a:openssl:openssl:3.0.1:*:*:*:*:*:*:*
+OpenSSL,3.0.1,OpenSSL,cpe:2.3:a:openssl:openssl:3.0.1:*:*:*:*:*:*:*
+openssl,3.0.1,,
+OPENSSL,3.0.1,openssl,
+nginx,1.18.0,nginx,
+nginx,1.18.0,NGINX,
+Apache Log4j,2.14.1,Apache,
+Apache Log4j,2.14.1,,

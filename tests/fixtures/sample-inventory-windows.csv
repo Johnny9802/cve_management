@@ -1,0 +1,9 @@
+name,version,vendor,keyword_nvd
+Windows 10 21H2,10.0.19044,Microsoft,cpe:2.3:o:microsoft:windows_10_21h2:10.0.19044:*:*:*:*:*:*:*
+Windows 10 22H2,10.0.19045,Microsoft,cpe:2.3:o:microsoft:windows_10_22h2:10.0.19045:*:*:*:*:*:*:*
+Windows 11 22H2,10.0.22621,Microsoft,cpe:2.3:o:microsoft:windows_11_22h2:10.0.22621:*:*:*:*:*:*:*
+Windows 11 23H2,10.0.22631,Microsoft,cpe:2.3:o:microsoft:windows_11_23h2:10.0.22631:*:*:*:*:*:*:*
+Windows 11 24H2,10.0.26100,Microsoft,cpe:2.3:o:microsoft:windows_11_24h2:10.0.26100:*:*:*:*:*:*:*
+Windows Server 2019,10.0.17763,Microsoft,cpe:2.3:o:microsoft:windows_server_2019:10.0.17763:*:*:*:*:*:*:*
+Windows Server 2022,10.0.20348,Microsoft,cpe:2.3:o:microsoft:windows_server_2022:10.0.20348:*:*:*:*:*:*:*
+Microsoft Edge,120.0.2210.144,Microsoft,cpe:2.3:a:microsoft:edge_chromium:120.0.2210.144:*:*:*:*:*:*:*

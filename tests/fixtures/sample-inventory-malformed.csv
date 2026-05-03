@@ -1,0 +1,9 @@
+name,version,vendor
+Apache Log4j,,Apache
+,2.14.1,
+,,,
+"Quoted Product, Name",2.0,Vendor
+"Another ""Quoted"" Product",3.1,Vendor2
+Valid Product,1.0,Vendor3
+=SUM(A1:A10),1.0,FormulaInjectionVendor
++CMD injection attempt,1.0,

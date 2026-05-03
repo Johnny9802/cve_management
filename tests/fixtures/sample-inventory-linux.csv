@@ -1,0 +1,9 @@
+name,version,vendor,keyword_nvd
+Ubuntu,22.04,Canonical,cpe:2.3:o:canonical:ubuntu_linux:22.04:*:*:*:lts:*:*:*
+Ubuntu,20.04,Canonical,cpe:2.3:o:canonical:ubuntu_linux:20.04:*:*:*:lts:*:*:*
+Debian,11,Debian,cpe:2.3:o:debian:debian_linux:11.0:*:*:*:*:*:*:*
+CentOS,7,CentOS,cpe:2.3:o:centos:centos:7.0:*:*:*:*:*:*:*
+Red Hat Enterprise Linux,8.8,Red Hat,cpe:2.3:o:redhat:enterprise_linux:8.8:*:*:*:*:*:*:*
+Linux Kernel,5.15.0,Linux,cpe:2.3:o:linux:linux_kernel:5.15:*:*:*:*:*:*:*
+glibc,2.35,GNU,,
+sudo,1.9.13p3,Todd C. Miller,cpe:2.3:a:sudo_project:sudo:1.9.13p3:*:*:*:*:*:*:*

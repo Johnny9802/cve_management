@@ -1,0 +1,115 @@
+services:
+
+  # ── PostgreSQL 16 ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cve-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-cve_management}
+      POSTGRES_USER:     ${POSTGRES_USER:-cve_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cve_password}
+    command: >
+      postgres
+        -c ssl=off
+        -c log_min_duration_statement=500
+        -c shared_preload_libraries=pg_stat_statements
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cve_user} -d ${POSTGRES_DB:-cve_management}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - cve-network
+
+  # ── Valkey (Redis-compatible) ──────────────────────────────────────────────
+  valkey:
+    image: valkey/valkey:7.2-alpine
+    container_name: cve-valkey
+    restart: unless-stopped
+    command: valkey-server --requirepass ${REDIS_PASSWORD:-cve_redis} --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${REDIS_PASSWORD:-cve_redis}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - cve-network
+
+  # ── Python/FastAPI backend (primary) ──────────────────────────────────────
+  backend:
+    build:
+      context: ./backend-py
+      dockerfile: Dockerfile
+      target: runtime
+    image: cve-management-backend:latest
+    container_name: cve-backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-3001}:8000"
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cve_user}:${POSTGRES_PASSWORD:-cve_password}@postgres:5432/${POSTGRES_DB:-cve_management}
+      REDIS_URL:    redis://:${REDIS_PASSWORD:-cve_redis}@valkey:6379
+      NVD_API_KEY:          ${NVD_API_KEY:-}
+      VULNCHECK_API_KEY:    ${VULNCHECK_API_KEY:-}
+      ALLOWED_ORIGIN:       ${ALLOWED_ORIGIN:-http://localhost:3000}
+      ENVIRONMENT:          production
+      LOG_LEVEL:            INFO
+      AUTO_MIGRATE:         "true"
+      DELTA_SYNC_INTERVAL_HOURS: ${DELTA_SYNC_INTERVAL_HOURS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL",
+        "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/ready')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - cve-network
+
+  # ── Frontend (Next.js) ────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://backend:8000
+    image: cve-management-frontend:latest
+    container_name: cve-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NODE_ENV:             production
+      NEXT_PUBLIC_API_URL:  http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - cve-network
+
+volumes:
+  postgres_data:
+    name: cve_management_postgres
+  valkey_data:
+    name: cve_management_valkey
+
+networks:
+  cve-network:
+    driver: bridge
+    name: cve-management-network

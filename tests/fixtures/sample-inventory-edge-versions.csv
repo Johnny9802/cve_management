@@ -1,0 +1,11 @@
+name,version,vendor,keyword_nvd
+OpenSSL,1.0.2k,OpenSSL,,
+OpenSSL,1.1.1t,OpenSSL,,
+Apache Log4j,2.0-beta9,Apache,,
+Apache Log4j,2.15.0,Apache,,
+nginx,1.24.0,nginx,,
+curl,latest,curl,,
+Python,N/A,Python Software Foundation,,
+zlib,1.2.11,,,
+MyApp,2023.1,Acme Corp,,
+LibreOffice,7.5.9.2,The Document Foundation,,

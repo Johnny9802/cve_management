@@ -1,0 +1,62 @@
+# ─── Secrets ──────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+
+# ─── OS / IDE ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Claude Code (local-only agent + memory + settings) ──────────────
+.claude/
+
+# ─── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# ─── Node / Next ─────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Docker volumes (none should be in repo, but defensive) ──────────
+*.sqlite
+*.sqlite3
+*.db
+postgres_data/
+valkey_data/
+redis_data/
+
+# ─── Build artefacts ─────────────────────────────────────────────────
+*.o
+*.a
+*.so
+*.dylib
+*.exe

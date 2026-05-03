@@ -1,0 +1,30 @@
+# Development overrides — automatically loaded by docker compose.
+# Adds hot-reload, debug logging, and exposes extra ports.
+services:
+
+  backend:
+    volumes:
+      - ./backend-py/app:/app/app:ro        # source hot-reload
+      - ./backend-py/alembic:/app/alembic:ro
+      - ./backend-py/alembic.ini:/app/alembic.ini:ro
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL:   DEBUG
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --log-level
+      - debug
+
+  postgres:
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+
+  valkey:
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
