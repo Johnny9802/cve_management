@@ -192,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router.router)
     # Sprint 3 — risk acceptance + SLA + read-only audit log
     app.include_router(risk_acceptance_router.router)
+    app.include_router(risk_acceptance_router.router_summary)
     app.include_router(sla_router.router)
     app.include_router(audit_router.router)
     app.include_router(system_router.router)

@@ -237,3 +237,84 @@ async def list_finding_risk_acceptances(
         cve_id,
     )
     return {"data": [dict(r) for r in rows], "total": len(rows)}
+
+
+# ─────────────────────────────────────────────────── separate top-level routes
+
+
+_risk_summary_router = APIRouter(prefix="/api/risk-acceptances", tags=["risk-acceptance"])
+
+
+@_risk_summary_router.get("/summary")
+async def risk_acceptance_summary(
+    pool: asyncpg.Pool = Depends(_get_pool),
+    expiring_window_days: int = 7,
+) -> dict[str, Any]:
+    """Dashboard counters: pending / approved / rejected / expired
+    plus a derived ``expiring_soon`` bucket of approved acceptances
+    whose ``expires_at`` is within the next ``expiring_window_days``.
+    """
+    expiring_window_days = max(1, min(365, expiring_window_days))
+    row = await pool.fetchrow(
+        """
+        SELECT
+            COUNT(*) FILTER (WHERE status = 'pending')                               AS pending,
+            COUNT(*) FILTER (WHERE status = 'approved')                              AS approved,
+            COUNT(*) FILTER (WHERE status = 'rejected')                              AS rejected,
+            COUNT(*) FILTER (WHERE status = 'expired')                               AS expired,
+            COUNT(*) FILTER (
+                WHERE status = 'approved'
+                  AND expires_at <= CURRENT_DATE + ($1 || ' days')::interval
+            )                                                                        AS expiring_soon,
+            COUNT(*)                                                                  AS total
+        FROM risk_acceptances
+        """,
+        str(expiring_window_days),
+    )
+
+    pending_recent = await pool.fetch(
+        """
+        SELECT ra.id, ra.finding_id, ra.requested_by, ra.justification,
+               ra.expires_at, ra.created_at,
+               f.product_id, f.cve_id, p.name AS product_name, p.version,
+               c.severity
+        FROM risk_acceptances ra
+        JOIN findings f  ON f.id = ra.finding_id
+        JOIN products p  ON p.id = f.product_id
+        JOIN cves     c  ON c.cve_id = f.cve_id
+        WHERE ra.status = 'pending'
+        ORDER BY ra.created_at DESC
+        LIMIT 10
+        """,
+    )
+
+    expiring_rows = await pool.fetch(
+        """
+        SELECT ra.id, ra.finding_id, ra.approved_by, ra.expires_at,
+               (ra.expires_at - CURRENT_DATE) AS days_remaining,
+               f.product_id, f.cve_id, p.name AS product_name, p.version,
+               c.severity
+        FROM risk_acceptances ra
+        JOIN findings f  ON f.id = ra.finding_id
+        JOIN products p  ON p.id = f.product_id
+        JOIN cves     c  ON c.cve_id = f.cve_id
+        WHERE ra.status = 'approved'
+          AND ra.expires_at <= CURRENT_DATE + ($1 || ' days')::interval
+        ORDER BY ra.expires_at ASC
+        LIMIT 20
+        """,
+        str(expiring_window_days),
+    )
+
+    return {
+        "expiring_window_days": expiring_window_days,
+        "counters": dict(row) if row else {},
+        "pending_recent":   [dict(r) for r in pending_recent],
+        "expiring_soon":    [dict(r) for r in expiring_rows],
+    }
+
+
+# Mount the standalone summary router. The original prefix is
+# ``/api/findings/...`` so a separate router is necessary for the
+# /api/risk-acceptances family.
+router_summary = _risk_summary_router

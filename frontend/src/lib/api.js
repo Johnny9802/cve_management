@@ -31,6 +31,22 @@ export const getCveIntel = (id, { refresh = false } = {}) =>
 export const getDashboardTriage = (params = {}) =>
   api.get('/dashboard/triage', { params }).then((r) => r.data);
 
+// Sprint Dashboards 2 — Remediation & Governance
+export const getDashboardRemediation = (params = {}) =>
+  api.get('/dashboard/remediation', { params }).then((r) => r.data);
+export const getOwnerWorkload = () =>
+  api.get('/dashboard/owner-workload').then((r) => r.data);
+export const getRiskAcceptanceSummary = (params = {}) =>
+  api.get('/risk-acceptances/summary', { params }).then((r) => r.data);
+export const getSlaSummary = () =>
+  api.get('/findings/sla/summary').then((r) => r.data);
+export const getMttr = (params = { period: '90d' }) =>
+  api.get('/findings/mttr', { params }).then((r) => r.data);
+export const getAuditLog = (params = {}) =>
+  api.get('/audit-log', { params }).then((r) => r.data);
+export const getSlaList = (params = {}) =>
+  api.get('/findings/sla', { params }).then((r) => r.data);
+
 // P7 — Webhooks management
 export const listWebhooks = () => api.get('/webhooks').then((r) => r.data);
 export const createWebhook = (data) => api.post('/webhooks', data).then((r) => r.data);

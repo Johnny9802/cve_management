@@ -311,3 +311,142 @@ async def dashboard_triage(
     }
     await redis.setex(cache_key, _TRIAGE_TTL, json.dumps(payload, default=str))
     return payload
+
+
+# ───────────────────────────────────────────── Dashboard D (Remediation)
+
+_REMEDIATION_TTL = 30  # seconds — kanban must feel fresh after status change
+
+
+@router.get("/owner-workload")
+async def dashboard_owner_workload(
+    pool: asyncpg.Pool = Depends(_get_pool),
+) -> dict[str, Any]:
+    """Per-owner aggregates for the Remediation dashboard.
+
+    Returns one row per assignee with counts of open / in_review /
+    breached (open and past due) / remediated and the average days
+    between creation and the latest 'remediated' history entry.
+    Findings without an assignee are grouped under ``unassigned``.
+    """
+    rows = await pool.fetch(
+        """
+        WITH last_remediated AS (
+            SELECT DISTINCT ON (finding_id)
+                   finding_id, changed_at
+            FROM findings_history
+            WHERE new_status = 'remediated'
+            ORDER BY finding_id, changed_at DESC
+        )
+        SELECT
+            COALESCE(NULLIF(TRIM(f.assigned_to), ''), 'unassigned') AS owner,
+            COUNT(*)                                                AS total,
+            COUNT(*) FILTER (WHERE f.status = 'open')               AS open_count,
+            COUNT(*) FILTER (WHERE f.status = 'in_review')          AS in_review_count,
+            COUNT(*) FILTER (WHERE f.status = 'planned')            AS planned_count,
+            COUNT(*) FILTER (WHERE f.status = 'accepted_risk')      AS accepted_risk_count,
+            COUNT(*) FILTER (WHERE f.status = 'remediated')         AS remediated_count,
+            COUNT(*) FILTER (WHERE f.status = 'closed')             AS closed_count,
+            COUNT(*) FILTER (
+                WHERE f.status IN ('open', 'in_review', 'planned')
+                  AND f.due_date IS NOT NULL
+                  AND f.due_date < CURRENT_DATE
+            )                                                       AS breached_count,
+            ROUND(
+              AVG(
+                EXTRACT(EPOCH FROM (COALESCE(lr.changed_at, f.updated_at) - f.created_at))
+                / 86400.0
+              ) FILTER (WHERE f.status = 'remediated')::numeric,
+              1
+            )                                                       AS avg_days_to_remediate
+        FROM findings f
+        LEFT JOIN last_remediated lr ON lr.finding_id = f.id
+        GROUP BY owner
+        ORDER BY breached_count DESC, open_count DESC, owner ASC
+        """
+    )
+    return {"owners": [dict(r) for r in rows], "total_owners": len(rows)}
+
+
+@router.get("/remediation")
+async def dashboard_remediation(
+    pool: asyncpg.Pool = Depends(_get_pool),
+    redis: Redis = Depends(_get_redis),
+    audit_limit: int = 30,
+) -> dict[str, Any]:
+    """Consolidated payload for Dashboard D so the page does ONE call.
+
+    Pulls in: pipeline counts (FSM kanban), SLA matrix, MTTR per
+    severity (90d), risk-acceptance summary, owner workload, and the
+    last N audit-log entries.
+    """
+    audit_limit = max(1, min(200, audit_limit))
+    cache_key = f"dashboard:remediation:al{audit_limit}"
+    cached = await redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    async with pool.acquire() as conn:
+        pipeline_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'open')           AS open_count,
+                COUNT(*) FILTER (WHERE status = 'in_review')      AS in_review_count,
+                COUNT(*) FILTER (WHERE status = 'planned')        AS planned_count,
+                COUNT(*) FILTER (WHERE status = 'accepted_risk')  AS accepted_risk_count,
+                COUNT(*) FILTER (WHERE status = 'remediated')     AS remediated_count,
+                COUNT(*) FILTER (WHERE status = 'closed')         AS closed_count,
+                COUNT(*) FILTER (WHERE status = 'false_positive') AS false_positive_count,
+                COUNT(*)                                           AS total
+            FROM findings
+            """,
+        )
+
+        sla_rows = await conn.fetch(
+            """
+            SELECT
+                f.id, f.product_id, f.cve_id, f.status, f.due_date, f.assigned_to,
+                f.priority_score, c.severity, c.is_kev,
+                p.name AS product_name, p.version
+            FROM findings f
+            JOIN cves c     ON c.cve_id = f.cve_id
+            JOIN products p ON p.id     = f.product_id
+            ORDER BY f.due_date ASC NULLS LAST
+            LIMIT 200
+            """,
+        )
+
+        risk_summary_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'pending')                               AS pending,
+                COUNT(*) FILTER (WHERE status = 'approved')                              AS approved,
+                COUNT(*) FILTER (WHERE status = 'rejected')                              AS rejected,
+                COUNT(*) FILTER (WHERE status = 'expired')                               AS expired,
+                COUNT(*) FILTER (
+                    WHERE status = 'approved'
+                      AND expires_at <= CURRENT_DATE + INTERVAL '7 days'
+                )                                                                        AS expiring_soon
+            FROM risk_acceptances
+            """,
+        )
+
+        audit_rows = await conn.fetch(
+            """
+            SELECT id, action, actor, actor_email, actor_role,
+                   target_type, target_id, diff, ip_address, ts
+            FROM audit_log
+            ORDER BY ts DESC
+            LIMIT $1
+            """,
+            audit_limit,
+        )
+
+    return_payload: dict[str, Any] = {
+        "pipeline":       dict(pipeline_row) if pipeline_row else {},
+        "findings":       [dict(r) for r in sla_rows],
+        "risk_summary":   dict(risk_summary_row) if risk_summary_row else {},
+        "audit_recent":   [dict(r) for r in audit_rows],
+    }
+    await redis.setex(cache_key, _REMEDIATION_TTL, json.dumps(return_payload, default=str))
+    return return_payload
