@@ -450,3 +450,295 @@ async def dashboard_remediation(
     }
     await redis.setex(cache_key, _REMEDIATION_TTL, json.dumps(return_payload, default=str))
     return return_payload
+
+
+# ─────────────────────────────────────────────── Dashboard C (Asset Exposure)
+
+_EXPOSURE_TTL = 300  # 5 min — exposure shifts slowly
+
+
+@router.get("/exposure")
+async def dashboard_exposure(
+    pool: asyncpg.Pool = Depends(_get_pool),
+    redis: Redis = Depends(_get_redis),
+    top_limit: int = 10,
+) -> dict[str, Any]:
+    """Asset & product exposure aggregator (Dashboard C).
+
+    Returns:
+      - top_vendors: vendors ranked by total exposure (priority-weighted)
+      - top_products_by_kev / top_products_by_critical
+      - heatmap: top products × severity counts + KEV cell
+      - inventory_coverage: % of products with resolved CPE / synced state
+      - eol_candidates: products with critical findings AND no recent CVE
+        publication (proxy for "no upstream patch in sight").
+    """
+    top_limit = max(1, min(50, top_limit))
+    cache_key = f"dashboard:exposure:l{top_limit}"
+    cached = await redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    async with pool.acquire() as conn:
+        coverage_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*)                                                                 AS total,
+                COUNT(*) FILTER (WHERE normalized_cpe IS NOT NULL AND normalized_cpe <> '') AS resolved,
+                COUNT(*) FILTER (WHERE cpe_confidence = 'certain')                       AS confidence_certain,
+                COUNT(*) FILTER (WHERE cpe_confidence = 'uncertain')                     AS confidence_uncertain,
+                COUNT(*) FILTER (WHERE sync_status = 'synced')                           AS synced,
+                COUNT(*) FILTER (WHERE sync_status = 'pending')                          AS pending,
+                COUNT(*) FILTER (WHERE sync_status = 'error')                            AS sync_error,
+                COUNT(*) FILTER (
+                    WHERE last_synced_at IS NULL
+                       OR last_synced_at < NOW() - INTERVAL '7 days'
+                )                                                                        AS sync_stale
+            FROM products
+            """
+        )
+
+        top_vendors_rows = await conn.fetch(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(p.vendor), ''), '(unknown)')                       AS vendor,
+                COUNT(DISTINCT p.id)                                                     AS product_count,
+                COUNT(f.id)                                                              AS finding_count,
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL')                       AS critical_count,
+                COUNT(f.id) FILTER (WHERE c.severity = 'HIGH')                           AS high_count,
+                COUNT(f.id) FILTER (WHERE c.is_kev = TRUE)                               AS kev_count,
+                COUNT(f.id) FILTER (WHERE c.has_public_poc = TRUE)                       AS poc_count,
+                COUNT(f.id) FILTER (WHERE c.has_nuclei_template = TRUE)                  AS nuclei_count,
+                COALESCE(SUM(f.priority_score) FILTER (
+                    WHERE f.status IN ('open', 'in_review', 'planned')
+                ), 0)                                                                    AS exposure_score
+            FROM products p
+            LEFT JOIN findings f ON f.product_id = p.id
+            LEFT JOIN cves     c ON c.cve_id     = f.cve_id
+            GROUP BY vendor
+            ORDER BY exposure_score DESC, finding_count DESC, product_count DESC
+            LIMIT $1
+            """,
+            top_limit,
+        )
+
+        top_products_kev = await conn.fetch(
+            """
+            SELECT
+                p.id, p.name, p.version, p.vendor,
+                COUNT(f.id)                                                              AS finding_count,
+                COUNT(f.id) FILTER (WHERE c.is_kev = TRUE)                               AS kev_count,
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL')                       AS critical_count
+            FROM products p
+            LEFT JOIN findings f ON f.product_id = p.id
+            LEFT JOIN cves     c ON c.cve_id     = f.cve_id
+            GROUP BY p.id
+            HAVING COUNT(f.id) FILTER (WHERE c.is_kev = TRUE) > 0
+            ORDER BY kev_count DESC, critical_count DESC
+            LIMIT $1
+            """,
+            top_limit,
+        )
+
+        top_products_critical = await conn.fetch(
+            """
+            SELECT
+                p.id, p.name, p.version, p.vendor,
+                COUNT(f.id)                                                              AS finding_count,
+                COUNT(f.id) FILTER (WHERE c.is_kev = TRUE)                               AS kev_count,
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL')                       AS critical_count
+            FROM products p
+            LEFT JOIN findings f ON f.product_id = p.id
+            LEFT JOIN cves     c ON c.cve_id     = f.cve_id
+            GROUP BY p.id
+            HAVING COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL') > 0
+            ORDER BY critical_count DESC, finding_count DESC
+            LIMIT $1
+            """,
+            top_limit,
+        )
+
+        heatmap_rows = await conn.fetch(
+            """
+            WITH ranked AS (
+                SELECT p.id, p.name, p.version, p.vendor,
+                       COUNT(f.id) AS findings
+                FROM products p
+                LEFT JOIN findings f ON f.product_id = p.id
+                GROUP BY p.id
+                ORDER BY findings DESC
+                LIMIT $1
+            )
+            SELECT
+                r.id, r.name, r.version, r.vendor,
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL')             AS critical,
+                COUNT(f.id) FILTER (WHERE c.severity = 'HIGH')                 AS high,
+                COUNT(f.id) FILTER (WHERE c.severity = 'MEDIUM')               AS medium,
+                COUNT(f.id) FILTER (WHERE c.severity = 'LOW')                  AS low,
+                COUNT(f.id) FILTER (WHERE c.is_kev = TRUE)                     AS kev,
+                COUNT(f.id)                                                     AS total,
+                ROUND(AVG(f.priority_score)::numeric, 1)                        AS avg_priority
+            FROM ranked r
+            LEFT JOIN findings f ON f.product_id = r.id
+            LEFT JOIN cves     c ON c.cve_id     = f.cve_id
+            GROUP BY r.id, r.name, r.version, r.vendor
+            ORDER BY total DESC
+            """,
+            top_limit,
+        )
+
+        eol_rows = await conn.fetch(
+            """
+            SELECT
+                p.id, p.name, p.version, p.vendor,
+                COUNT(f.id)                                                       AS finding_count,
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL')                AS critical_count,
+                MAX(c.last_modified_at)                                           AS last_cve_modified
+            FROM products p
+            JOIN findings f ON f.product_id = p.id
+            JOIN cves     c ON c.cve_id     = f.cve_id
+            GROUP BY p.id
+            HAVING
+                COUNT(f.id) FILTER (WHERE c.severity = 'CRITICAL') > 0
+                AND MAX(c.last_modified_at) < NOW() - INTERVAL '365 days'
+            ORDER BY critical_count DESC, last_cve_modified ASC
+            LIMIT $1
+            """,
+            top_limit,
+        )
+
+    payload: dict[str, Any] = {
+        "top_limit":              top_limit,
+        "inventory_coverage":     dict(coverage_row) if coverage_row else {},
+        "top_vendors":            [dict(r) for r in top_vendors_rows],
+        "top_products_by_kev":    [dict(r) for r in top_products_kev],
+        "top_products_by_critical": [dict(r) for r in top_products_critical],
+        "heatmap":                [dict(r) for r in heatmap_rows],
+        "eol_candidates":         [dict(r) for r in eol_rows],
+    }
+    await redis.setex(cache_key, _EXPOSURE_TTL, json.dumps(payload, default=str))
+    return payload
+
+
+# ───────────────────────────────────────────── Dashboard A (Executive)
+
+_EXEC_TTL = 60
+
+
+@router.get("/exec")
+async def dashboard_exec(
+    pool: asyncpg.Pool = Depends(_get_pool),
+    redis: Redis = Depends(_get_redis),
+    period_days: int = 90,
+) -> dict[str, Any]:
+    """Executive dashboard payload — trend lines from exec_snapshots."""
+    period_days = max(7, min(730, period_days))
+    cache_key = f"dashboard:exec:p{period_days}"
+    cached = await redis.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    async with pool.acquire() as conn:
+        snapshots = await conn.fetch(
+            """
+            SELECT
+                captured_on, total_cves, kev_total,
+                critical_open, high_open, medium_open, low_open,
+                findings_open, findings_in_review, findings_remediated_24h,
+                findings_breached, findings_at_risk,
+                risk_pending, risk_approved, risk_expiring_soon,
+                mttr_critical_days, mttr_high_days, mttr_medium_days, mttr_low_days,
+                kev_with_open_finding, poc_with_open_finding, nuclei_with_open_finding,
+                risk_score
+            FROM exec_snapshots
+            WHERE captured_on >= CURRENT_DATE - ($1 || ' days')::interval
+            ORDER BY captured_on ASC
+            """,
+            str(period_days),
+        )
+        aging_row = await conn.fetchrow(
+            """
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE status IN ('open', 'in_review', 'planned')
+                      AND created_at >= NOW() - INTERVAL '30 days'
+                ) AS bucket_0_30,
+                COUNT(*) FILTER (
+                    WHERE status IN ('open', 'in_review', 'planned')
+                      AND created_at <  NOW() - INTERVAL '30 days'
+                      AND created_at >= NOW() - INTERVAL '90 days'
+                ) AS bucket_30_90,
+                COUNT(*) FILTER (
+                    WHERE status IN ('open', 'in_review', 'planned')
+                      AND created_at < NOW() - INTERVAL '90 days'
+                ) AS bucket_90_plus,
+                COUNT(*) FILTER (
+                    WHERE status IN ('open', 'in_review', 'planned')
+                ) AS open_total
+            FROM findings
+            """
+        )
+        velocity_rows = await conn.fetch(
+            """
+            SELECT
+                TO_CHAR(date_trunc('week', changed_at), 'YYYY-MM-DD') AS week,
+                COUNT(*) AS remediated_count
+            FROM findings_history
+            WHERE new_status = 'remediated'
+              AND changed_at >= NOW() - INTERVAL '12 weeks'
+            GROUP BY week
+            ORDER BY week ASC
+            """
+        )
+        top_owners_rows = await conn.fetch(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(f.assigned_to), ''), 'unassigned') AS owner,
+                COUNT(*) FILTER (WHERE f.status = 'remediated')         AS remediated,
+                COUNT(*) FILTER (
+                    WHERE f.status IN ('open', 'in_review', 'planned')
+                      AND f.due_date IS NOT NULL
+                      AND f.due_date < CURRENT_DATE
+                )                                                        AS breached,
+                COUNT(*)                                                 AS total
+            FROM findings f
+            WHERE f.updated_at >= NOW() - INTERVAL '90 days'
+              OR f.status IN ('open', 'in_review', 'planned')
+            GROUP BY owner
+            ORDER BY remediated DESC, breached ASC
+            LIMIT 10
+            """
+        )
+
+    series = [dict(r) for r in snapshots]
+    latest = series[-1] if series else None
+    earliest = series[0] if series else None
+
+    def _delta(field: str) -> int | None:
+        if latest is None or earliest is None:
+            return None
+        l, e = latest.get(field), earliest.get(field)
+        if l is None or e is None:
+            return None
+        try:
+            return int(l) - int(e)
+        except (TypeError, ValueError):
+            return None
+
+    payload: dict[str, Any] = {
+        "period_days":      period_days,
+        "snapshots":        series,
+        "latest":           latest,
+        "earliest":         earliest,
+        "deltas": {
+            "risk_score":            _delta("risk_score"),
+            "kev_with_open_finding": _delta("kev_with_open_finding"),
+            "findings_open":         _delta("findings_open"),
+            "findings_breached":     _delta("findings_breached"),
+        },
+        "aging_buckets":    dict(aging_row) if aging_row else {},
+        "velocity_weekly":  [dict(r) for r in velocity_rows],
+        "top_owners":       [dict(r) for r in top_owners_rows],
+    }
+    await redis.setex(cache_key, _EXEC_TTL, json.dumps(payload, default=str))
+    return payload

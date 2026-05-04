@@ -27,6 +27,7 @@ from app.ingestion.nvd_client import NvdClient
 from app.ingestion.vulncheck_client import VulnCheckClient
 from app.ingestion.vulnx_client import VulnxClient
 from app.query.opencve_client import OpenCveClient
+from app.workers.daily_snapshot import capture_daily_snapshot
 from app.workers.risk_acceptance_expirer import expire_risk_acceptances
 from app.workers.sync_job_worker import drain_pending_jobs
 from app.workers.webhook_worker import drain_pending_deliveries
@@ -178,6 +179,31 @@ def create_scheduler(
         _sync_job_poll,
         trigger=IntervalTrigger(seconds=5),
         id="sync_job_poll",
+        replace_existing=True,
+        next_run_time=datetime.utcnow(),
+    )
+
+    # ── daily_snapshot (Sprint Dashboards 3) ──────────────────────────
+    # Captures Executive-dashboard KPIs once per day. The lifespan also
+    # runs it at startup so the dashboard is never blank on a fresh
+    # install.
+    async def _daily_snapshot() -> None:
+        log = logger.bind(job="daily_snapshot")
+        try:
+            result = await capture_daily_snapshot(db_pool)
+            log.info(
+                "scheduler.job.done",
+                captured_on=result.captured_on,
+                risk_score=result.risk_score,
+                duration_ms=result.duration_ms,
+            )
+        except Exception as exc:
+            log.error("scheduler.job.error", error=str(exc), exc_info=True)
+
+    scheduler.add_job(
+        _daily_snapshot,
+        trigger=IntervalTrigger(hours=24),
+        id="daily_snapshot",
         replace_existing=True,
         next_run_time=datetime.utcnow(),
     )

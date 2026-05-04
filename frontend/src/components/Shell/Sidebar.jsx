@@ -16,8 +16,8 @@ const NAV = [
     items: [
       { href: '/dashboards/triage',      label: 'SOC Triage',          badge: 'B' },
       { href: '/dashboards/remediation', label: 'Remediation',         badge: 'D' },
-      { href: '/dashboards/exposure',    label: 'Asset Exposure',      badge: 'C', disabled: true, hint: 'Sprint Dashboards 3' },
-      { href: '/dashboards/executive',   label: 'Executive',           badge: 'A', disabled: true, hint: 'Sprint Dashboards 3' },
+      { href: '/dashboards/exposure',    label: 'Asset Exposure',      badge: 'C' },
+      { href: '/dashboards/executive',   label: 'Executive',           badge: 'A' },
     ],
   },
   {

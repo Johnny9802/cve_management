@@ -47,6 +47,12 @@ export const getAuditLog = (params = {}) =>
 export const getSlaList = (params = {}) =>
   api.get('/findings/sla', { params }).then((r) => r.data);
 
+// Sprint Dashboards 3 — Asset Exposure (C) + Executive (A)
+export const getDashboardExposure = (params = {}) =>
+  api.get('/dashboard/exposure', { params }).then((r) => r.data);
+export const getDashboardExec = (params = {}) =>
+  api.get('/dashboard/exec', { params }).then((r) => r.data);
+
 // P7 — Webhooks management
 export const listWebhooks = () => api.get('/webhooks').then((r) => r.data);
 export const createWebhook = (data) => api.post('/webhooks', data).then((r) => r.data);
