@@ -27,6 +27,10 @@ export const getCveIntel = (id, { refresh = false } = {}) =>
     .get(`/cves/${id}/intel`, { params: refresh ? { refresh: 'true' } : {} })
     .then((r) => r.data);
 
+// Sprint Dashboards 1 — SOC Triage aggregator
+export const getDashboardTriage = (params = {}) =>
+  api.get('/dashboard/triage', { params }).then((r) => r.data);
+
 // P7 — Webhooks management
 export const listWebhooks = () => api.get('/webhooks').then((r) => r.data);
 export const createWebhook = (data) => api.post('/webhooks', data).then((r) => r.data);

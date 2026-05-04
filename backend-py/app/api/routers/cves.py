@@ -131,6 +131,10 @@ async def list_cves(
     min_priority: int | None = None,
     keyword: str | None = None,
     year: int | None = None,
+    has_poc: str | None = None,        # 'true' / 'false' / None
+    has_nuclei: str | None = None,     # 'true' / 'false' / None
+    since_days: int | None = None,     # restrict to last N days (published_at OR exploitability_updated_at)
+    since_field: str | None = None,    # 'published_at' (default) | 'exploitability_updated_at'
     sort: str = "priority_score",
     order: str = "desc",
     page: int = 1,
@@ -187,8 +191,12 @@ async def list_cves(
     if severity:
         conditions.append(f"c.severity = ANY(${p})")
         base_args.append([s.strip().upper() for s in severity.split(",")]); p += 1
-    if kev == "true":
+    # KEV filter accepts 'true' (only KEV) or 'false' (exclude KEV).
+    # Anything else (None, empty, …) ⇒ no filter.
+    if (kev or "").lower() == "true":
         conditions.append("c.is_kev = TRUE")
+    elif (kev or "").lower() == "false":
+        conditions.append("c.is_kev = FALSE")
     if min_epss is not None:
         conditions.append(f"c.epss_score >= ${p}"); base_args.append(min_epss); p += 1
     if max_epss is not None:
@@ -199,6 +207,23 @@ async def list_cves(
         conditions.append(f"({priority_expr}) >= ${p}"); base_args.append(int(min_priority)); p += 1
     if year is not None:
         conditions.append(f"EXTRACT(YEAR FROM c.published_at) = ${p}"); base_args.append(year); p += 1
+    # Nullable boolean flags — map 'true'/'false' to SQL.
+    if (has_poc or "").lower() == "true":
+        conditions.append("c.has_public_poc = TRUE")
+    elif (has_poc or "").lower() == "false":
+        conditions.append("c.has_public_poc IS DISTINCT FROM TRUE")
+    if (has_nuclei or "").lower() == "true":
+        conditions.append("c.has_nuclei_template = TRUE")
+    elif (has_nuclei or "").lower() == "false":
+        conditions.append("c.has_nuclei_template IS DISTINCT FROM TRUE")
+    # Restrict to recent items. since_field defaults to published_at;
+    # use 'exploitability_updated_at' to surface CVEs whose PoC/Nuclei
+    # signal appeared recently.
+    if since_days is not None and since_days > 0:
+        field = "c.exploitability_updated_at" if since_field == "exploitability_updated_at" else "c.published_at"
+        # cap to a reasonable upper bound
+        days = min(int(since_days), 3650)
+        conditions.append(f"{field} >= NOW() - INTERVAL '{days} days'")
     if keyword:
         conditions.append(
             f"(c.cve_id ILIKE ${p} OR c.raw_payload->'descriptions'->0->>'value' ILIKE ${p+1})"
