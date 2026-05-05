@@ -11,6 +11,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import Sidebar from './Sidebar';
+import DashboardSwitcher from './DashboardSwitcher';
 import RefreshButton from '../UI/RefreshButton';
 
 export default function AppShell({ title, subtitle, actions, onRefresh, lastRefreshed, children }) {
@@ -28,13 +29,14 @@ export default function AppShell({ title, subtitle, actions, onRefresh, lastRefr
   return (
     <div className="min-h-screen bg-gray-950">
       {/* Topbar */}
-      <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-30 h-14">
-        <div className="max-w-screen-2xl mx-auto px-6 h-full flex items-center justify-between gap-4">
-          <Link href="/" className="flex flex-col leading-tight">
+      <header className="border-b border-gray-800 bg-gray-900/80 backdrop-blur sticky top-0 z-30 min-h-[3.5rem]">
+        <div className="max-w-screen-2xl mx-auto px-4 lg:px-6 py-2 flex items-center justify-between gap-3 flex-wrap">
+          <Link href="/dashboards" className="flex flex-col leading-tight shrink-0">
             <span className="text-base font-bold text-white">CVE Management</span>
-            <span className="text-xs text-gray-500">NVD · CISA KEV · EPSS · vulnx</span>
+            <span className="text-xs text-gray-500 hidden sm:block">NVD · KEV · EPSS · vulnx</span>
           </Link>
-          <div className="flex items-center gap-3 flex-wrap">
+          <DashboardSwitcher />
+          <div className="flex items-center gap-3 flex-wrap ml-auto">
             <span className="text-xs text-gray-500 hidden md:inline" aria-live="polite">
               {lastRefreshed
                 ? `Ultimo aggiornamento: ${new Date(lastRefreshed).toLocaleTimeString('it-IT')}`

@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import StatsBar from '../components/Dashboard/StatsBar';
 import SeverityChart from '../components/Dashboard/SeverityChart';
 import TimelineChart from '../components/Dashboard/TimelineChart';
@@ -143,6 +144,13 @@ export default function Home() {
             <p className="text-xs text-gray-500">NVD · CISA KEV · EPSS</p>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
+            <Link
+              href="/dashboards"
+              className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition focus:outline-none whitespace-nowrap"
+              title="Apri il selettore delle 4 dashboard SecOps"
+            >
+              ⊞ Dashboards SecOps →
+            </Link>
             <nav role="tablist" aria-label="Sezioni applicazione" className="flex bg-gray-800 rounded-lg p-0.5 gap-0.5 overflow-x-auto">
               {TABS.map(({ key, label }) => (
                 <button
