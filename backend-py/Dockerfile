@@ -1,29 +1,45 @@
+# =============================================================================
+# CVE Management Platform — Backend Dockerfile (Python 3.12 / FastAPI)
+# -----------------------------------------------------------------------------
+# Multi-stage build:
+#   1. builder — uses `uv` to install runtime deps from pyproject.toml into
+#      /opt/venv. Single source of truth: dependency list lives in
+#      pyproject.toml, NOT duplicated here.
+#   2. runtime — slim image with the prepared venv, app code, alembic, and a
+#      non-root user.
+#
+# Note on reproducibility: a `uv.lock` was not generated at refactor time
+# because `uv` is not installed on the build host. As a result we use
+# `uv sync --no-dev --no-install-project` WITHOUT `--frozen`, which resolves
+# deps at build time against pyproject.toml constraints. To get fully
+# reproducible builds, run `uv lock` locally, commit `uv.lock`, then change
+# the COPY + uv sync lines below (see inline TODO).
+# =============================================================================
+
 # ── Stage 1: dependency builder ───────────────────────────────────────────────
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Pull the uv binary from the official Astral image (pinned to :latest;
+# pin to a version tag like :0.4.0 in stricter environments).
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY pyproject.toml .
+# Create the target venv at the canonical /opt/venv path used by runtime.
+RUN uv venv /opt/venv
 
-# Create venv then install deps using uv (avoids pip-in-venv bootstrapping)
-RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python3 --no-cache \
-        "fastapi>=0.111.0" \
-        "uvicorn[standard]>=0.30.0" \
-        "asyncpg>=0.29.0" \
-        "httpx>=0.27.0" \
-        "pydantic>=2.7.0" \
-        "pydantic-settings>=2.3.0" \
-        "structlog>=24.1.0" \
-        "arq>=0.26.0" \
-        "apscheduler>=3.10.0,<4.0.0" \
-        "rapidfuzz>=3.9.0" \
-        "alembic>=1.13.0" \
-        "sqlalchemy[asyncio]>=2.0.0" \
-        "redis[hiredis]>=5.0.0"
+# Copy ONLY pyproject.toml so dep layer is cached when project code changes.
+# TODO: when uv.lock is committed, change to:
+#       COPY pyproject.toml uv.lock ./
+#       RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --no-install-project
+COPY pyproject.toml ./
+
+# Install runtime deps into /opt/venv. --no-install-project skips building the
+# project itself (source not present in this stage). --no-dev excludes the
+# dev-dependencies group. uv reads dependencies from pyproject.toml.
+ENV VIRTUAL_ENV=/opt/venv
+RUN uv sync --no-dev --no-install-project
 
 # ── Stage 2: runtime image ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

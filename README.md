@@ -8,6 +8,7 @@
 [![Stack](https://img.shields.io/badge/stack-Python%203.12%20%C2%B7%20FastAPI%20%C2%B7%20Next.js%2014-blue)]()
 [![Tests](https://img.shields.io/badge/tests-24%20files%20%C2%B7%20unit%20%2B%20contract%20%2B%20integration%20%2B%20security-success)]()
 [![License](https://img.shields.io/badge/license-personal%20project-lightgrey)]()
+[![CI](https://github.com/Johnny9802/cve_management/actions/workflows/ci.yml/badge.svg)](https://github.com/Johnny9802/cve_management/actions/workflows/ci.yml)
 
 > ⚠️ **Disclaimer** — progetto personale di laboratorio, non production-ready. Manca auth/RBAC, è single-tenant single-instance, non è stato penetration-tested. Codice scritto come portfolio per esplorare patterns moderni di backend asincrono, vulnerability intelligence e OpSec applicato a integrazioni esterne.
 
@@ -100,6 +101,22 @@ tests/
 
 ---
 
+## Demo scenario
+
+Flusso end-to-end di un giro completo, dall'inventario al report:
+
+1. **Import inventory** — l'utente carica il proprio inventario software (nome prodotto, vendor, versione) via CSV o `POST /api/products` (singolo o `bulk` fino a 500 record).
+2. **Resolution** — il `CpeNormalizer` (rapidfuzz su catalog NVD CPE) traduce ogni `vendor/product/version` in un identificatore CPE-like, marcandolo `CERTAIN` o `UNCERTAIN`.
+3. **Local correlation** — il `query_engine` interroga il mirror locale (tabella `cves`) e produce candidate finding via `VersionMatcher` (semver, OpenSSL patch letter, pre-release).
+4. **Enrichment** — ogni CVE viene arricchita con EPSS (FIRST.org), KEV (CISA) e flag exploitability (`has_public_poc`, `has_nuclei_template`) provenienti da vulnx.
+5. **Priority** — `compute_priority_score` produce uno score 0–100 con factor breakdown (EPSS, CVSS, KEV, recency, exploitability) consultabile su `/api/cves/{id}/intel`.
+6. **Lifecycle** — i finding entrano in una FSM `open → in_review → planned → remediated | accepted_risk | closed`. Ogni transizione viene loggata in `findings_history` (chi, quando, perché).
+7. **Reporting** — le 4 dashboard SecOps + l'export PDF Executive + l'export CSV/audit log danno alle personas (analyst / lead / asset owner / CISO) la vista filtrata sui propri obiettivi.
+
+Tutti i sette step sono coperti da test integration/contract: vedi [`tests/integration/test_e2e_smoke.py`](backend-py/tests/integration/test_e2e_smoke.py) per il flusso completo e i provider mock in `tests/contract/`.
+
+---
+
 ## Stack
 
 **Backend** Python 3.12 · FastAPI · asyncpg · Pydantic v2 · structlog · Alembic · APScheduler · rapidfuzz · httpx
@@ -144,6 +161,8 @@ cp .env.example .env
 
 docker compose up --build
 ```
+
+> 💡 Le migration Alembic vengono applicate automaticamente al primo avvio (`AUTO_MIGRATE=true`, default). Per disabilitarle e farle a mano, setta `AUTO_MIGRATE=false` in `.env`.
 
 - Frontend → http://localhost:3000
 - API + Swagger → http://localhost:3001/api/docs
@@ -250,7 +269,7 @@ cve-management/
 | Auth / RBAC | l'app gira su localhost / network interna | OIDC (Keycloak/Auth0), RBAC con ruoli analyst/manager/admin |
 | Multi-tenancy | single-tenant per design | row-level security, scope sui product/finding |
 | HA / scaling orizzontale | rate governor è `asyncio.Semaphore` single-instance | governor distribuito (Redis-based), leader election scheduler |
-| CI/CD pipeline | test girano in locale | GitHub Actions: ruff + mypy + pytest + build image + scan |
+| Image build + supply chain | il workflow attuale fa lint/type/test, ma non builda l'immagine | aggiungere build Docker + Trivy/Grype scan + SBOM (Syft) + signed image |
 | Penetration test | non è stato fatto | review esterna, SAST/DAST, secret scanning |
 | Frontend in TypeScript | JSX è sufficiente per un MVP | migrazione TS + test (Playwright/Vitest) |
 
@@ -282,7 +301,7 @@ Il backend è un **rewrite Python** di un primo MVP Node.js (cartella `backend/`
 
 ## License & Credits
 
-Progetto personale a scopo formativo / portfolio. Le fonti dati sono pubbliche:
+Progetto personale a scopo formativo / portfolio — uso, redistribuzione e impieghi commerciali sono soggetti alle condizioni nel file [`LICENSE`](LICENSE) (non è una licenza OSI: il codice è pubblicato per review/valutazione, non per uso in produzione). Le fonti dati sono pubbliche:
 
 - [NIST NVD](https://nvd.nist.gov/)
 - [VulnCheck NVD++](https://vulncheck.com/) (free community tier)

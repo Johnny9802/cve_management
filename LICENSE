@@ -1,0 +1,48 @@
+CVE Management Platform — Portfolio License Notice
+Copyright (c) 2026 Giovanni Orlando
+
+This repository is published as a personal portfolio project. The source code
+is shared for review and educational purposes only — so that recruiters, peers,
+and the wider community can read it, learn from it, and evaluate the author's
+work.
+
+Repository: github.com/Johnny9802/cve_management
+Contact:    orlandogiovannino@gmail.com
+
+Permitted
+
+- Reading and studying the source code.
+- Cloning the repository to a local machine.
+- Running the application locally for personal evaluation (e.g. trying it out,
+  reviewing how it behaves, learning from the implementation).
+
+Not Permitted (without prior written consent from the author)
+
+- Production use of any kind, in any environment.
+- Redistribution of the code, in whole or in part — including mirroring on
+  other platforms, repackaging, or republishing under a different name.
+- Sublicensing to third parties.
+- Commercial use, whether direct or indirect.
+- Inclusion of this code (or substantial portions of it) in another product or
+  service, whether open-source or commercial.
+
+If you would like to do any of the above, please get in touch first at
+orlandogiovannino@gmail.com. The author is generally happy to discuss
+reasonable requests.
+
+No Warranty
+
+The software is provided "AS IS", without warranty of any kind, express or
+implied. The author makes no guarantees about correctness, fitness for a
+particular purpose, security, or availability, and accepts no liability for
+any damage or loss arising from the use of this code.
+
+Third-Party Components
+
+This project relies on external data sources — including NIST NVD, FIRST EPSS,
+CISA KEV, VulnCheck, CIRCL, OpenCVE, and ProjectDiscovery vulnx — as well as
+many third-party Python and npm dependencies. All of these remain governed by
+their own respective licenses and terms of use. The author claims no rights
+over them, and this notice does not modify or override their licensing in any
+way. Users are responsible for complying with the terms of each upstream
+provider when running or evaluating this project.
