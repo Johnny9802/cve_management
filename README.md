@@ -1,561 +1,299 @@
 # CVE Management Platform
 
-> Piattaforma di vulnerability management che ingerisce CVE da fonti autorevoli, le correla con un inventario software interno e produce **finding prioritizzati** per il ciclo di remediation.
+> Vulnerability-management platform che ingerisce CVE da fonti autorevoli, le correla con un inventario software interno e produce **finding prioritizzati** con tracking del ciclo di remediation.
 
-**Stack**: Python 3.12 · FastAPI · asyncpg · Valkey (Redis-compatible) · PostgreSQL 16 · Next.js 14
-**Architettura**: 4-layer (Data → Ingestion → Resolution → Query) · single-instance · OpSec-aware
+![Dashboard principale](docs/screen/pagine_iniziale.png)
 
----
+[![Status](https://img.shields.io/badge/status-MVP%20%2F%20personal%20lab-orange)]()
+[![Stack](https://img.shields.io/badge/stack-Python%203.12%20%C2%B7%20FastAPI%20%C2%B7%20Next.js%2014-blue)]()
+[![Tests](https://img.shields.io/badge/tests-24%20files%20%C2%B7%20unit%20%2B%20contract%20%2B%20integration%20%2B%20security-success)]()
+[![License](https://img.shields.io/badge/license-personal%20project-lightgrey)]()
 
-## Indice
-
-1. [Cos'è](#cosè)
-2. [Architettura](#architettura)
-3. [Modello dati](#modello-dati)
-4. [Algoritmo di prioritizzazione](#algoritmo-di-prioritizzazione)
-5. [OpSec & rete](#opsec--rete)
-6. [Quick start](#quick-start)
-7. [API di riferimento](#api-di-riferimento)
-8. [Layout del repository](#layout-del-repository)
-9. [Integrazioni esterne — analisi `vulnx` & `CVE-Intel`](#integrazioni-esterne--analisi-vulnx--cve-intel)
-10. [Roadmap di integrazione consigliata](#roadmap-di-integrazione-consigliata)
-11. [Operation runbook](#operation-runbook)
-12. [Testing](#testing)
-13. [Troubleshooting](#troubleshooting)
+> ⚠️ **Disclaimer** — progetto personale di laboratorio, non production-ready. Manca auth/RBAC, è single-tenant single-instance, non è stato penetration-tested. Codice scritto come portfolio per esplorare patterns moderni di backend asincrono, vulnerability intelligence e OpSec applicato a integrazioni esterne.
 
 ---
 
-## Cos'è
+## Cosa fa, in una riga
 
-La piattaforma risolve tre problemi tipici del vulnerability management aziendale:
+Carica l'inventario software (CSV/API), lo normalizza in CPE, scarica le CVE rilevanti dai feed pubblici, le arricchisce con EPSS+KEV+exploitability, calcola un **priority score 0–100** e produce finding tracciabili attraverso una FSM (`open → in_review → remediated | accepted_risk`).
 
-| Problema | Risposta della piattaforma |
+## Perché esiste
+
+Risponde a tre domande tipiche del vulnerability management:
+
+| Problema reale | Risposta della piattaforma |
 |---|---|
-| Le feed CVE sono enormi e rumorose | Ingest centralizzato (VulnCheck NVD++ / NIST NVD) con delta-sync incrementale ogni ora |
-| Mappare versione installata → CVE è ambiguo | Resolution layer con CPE normalizer + version range matcher (semver, OpenSSL patch letters, pre-release) e confidence `CERTAIN`/`UNCERTAIN` |
-| Mille CVE ma quale risolvo prima? | Priority score 0–100 che combina **EPSS** (exploit probability), **CVSS** (severity), **CISA KEV** (sfruttamento confermato), **recency** |
-
-L'utente carica l'inventario (CSV o API), la piattaforma risolve i CPE, scarica le CVE pertinenti, le arricchisce con EPSS + KEV e genera finding tracciabili attraverso una FSM (`open → in_review → remediated | accepted_risk | …`).
+| I feed CVE sono enormi e rumorosi | Mirror locale con delta-sync incrementale (VulnCheck NVD++ / NIST NVD) |
+| Mappare *versione installata → CVE* è ambiguo | Resolution layer: CPE normalizer (rapidfuzz) + version matcher (semver, OpenSSL patch letters, pre-release) con confidence `CERTAIN`/`UNCERTAIN` |
+| Mille CVE — quale risolvo *prima*? | Priority score che combina EPSS (40) + CVSS (25) + KEV (25) + recency (10) + exploitability (8) → 0–100 |
 
 ---
 
-## Architettura
+## Highlights tecnici (perché questo repo è interessante)
 
-### Vista a 4 layer
+### 1. Architettura a 4 layer disaccoppiati
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  L1 ── DATA               cves · products · findings · sync_jobs       │
-│        (PostgreSQL 16, JSONB GIN-indexed, history tables)               │
+│  L1 ─ DATA          PostgreSQL 16 · JSONB GIN-indexed · history tables │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  L2 ── INGESTION          VulnCheckClient → NvdClient → EpssClient     │
-│        TokenBucket rate governor · CircuitBreaker per provider         │
-│        APScheduler: delta_sync 1h · epss 24h · kev 6h                  │
+│  L2 ─ INGESTION     VulnCheck → NVD → EPSS → KEV → vulnx               │
+│                     TokenBucket per provider · CircuitBreaker FSM      │
+│                     APScheduler: delta 1h · epss 24h · kev 6h          │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  L3 ── RESOLUTION         CpeNormalizer · VersionMatcher · cache       │
-│        rapidfuzz vendor/product matching · semver+patch range eval     │
+│  L3 ─ RESOLUTION    CpeNormalizer (rapidfuzz) · VersionMatcher · cache │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  L4 ── QUERY              Tier 1 local DB → Tier 2 CIRCL fallback      │
-│        Tier 3 OpenCVE poll · cache 2 min · OpSec gate per provider     │
+│  L4 ─ QUERY         Tier 1 local DB → Tier 2 CIRCL → Tier 3 OpenCVE    │
+│                     Tier 4 vulnx on-demand · OpSec gate per provider   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Flusso dati end-to-end
+ADR completi e diagrammi C4 nel piano di architettura.
 
-```
-                 inventario CSV
-                        │
-                        ▼
-              ┌───────────────────┐
-              │  Resolution Layer │  ← rapidfuzz · NVD CPE API
-              │  product → CPE    │
-              └───────────────────┘
-                        │ normalized_cpe + confidence
-                        ▼
-              ┌───────────────────┐         ┌──────────────────┐
-   ingest ──▶ │  CVE mirror DB    │ ◀─────  │  EPSS / KEV      │
-              │  (cves table)     │         │  enrichment loop │
-              └───────────────────┘         └──────────────────┘
-                        │
-                        ▼
-              ┌───────────────────┐
-              │  Match engine     │  versionStartIncluding ≤ v < versionEndExcluding
-              │  produce finding  │  match_confidence: CERTAIN | UNCERTAIN
-              └───────────────────┘
-                        │
-                        ▼
-              ┌───────────────────┐
-              │  Priority engine  │  EPSS×40 + CVSS(0-25) + KEV(+25) + Recency(0-10)
-              └───────────────────┘
-                        │
-                        ▼
-                   API + UI
-              dashboard / findings / live search
+### 2. Priority engine post-CVSS
+
+Pesare EPSS al 40% e KEV al 25% (anziché un CVSS dominante) riflette la dottrina post-2022 di FIRST/SSVC: la *severity tecnica* conta meno della *probabilità che qualcuno stia davvero sfruttando la CVE*.
+
+```python
+score = round(EPSS × 40)               # 0–40   probabilità ML di sfruttamento
+      + CVSS_band                       # 0–25   severity tecnica (CRITICAL=25, HIGH=18, MEDIUM=10, LOW=4)
+      + (25 if is_kev else 0)           # 0/25   exploit attivo confermato (CISA)
+      + recency_bonus                   # 0–10   ≤30g→10, ≤90g→6, ≤365g→3
+      + exploitability_bonus            # 0–8    Nuclei template→8, public PoC→5
+                                        # cap 100
 ```
 
-### Componenti
+Etichette: ≥80 `CRITICAL`, ≥60 `HIGH`, ≥40 `MEDIUM`, <40 `MONITOR`. Implementazione: [`app/models/priority.py`](backend-py/app/models/priority.py).
 
-| Componente | File | Ruolo |
+### 3. OpSec-aware: l'inventario non lascia il perimetro
+
+Vincolo di prodotto esplicito, applicato dal codice — non dalla policy:
+
+| Provider | Tier | Cosa esce davvero |
 |---|---|---|
-| FastAPI app | `backend-py/app/main.py` | startup + DI di pool, redis, scheduler, clients |
-| Rate governor | `app/ingestion/rate_governor.py` | TokenBucket per provider (asyncio.Semaphore) |
-| Circuit breaker | `app/ingestion/circuit_breaker.py` | FSM CLOSED → OPEN → HALF_OPEN, status su `/api/health` |
-| VulnCheck client | `app/ingestion/vulncheck_client.py` | NVD++ ingestion (76.95% CPE coverage) |
-| NVD client | `app/ingestion/nvd_client.py` | fallback NIST + delta sync |
-| EPSS client | `app/ingestion/epss_client.py` | FIRST.org v3, batch fetch |
-| KEV client | `app/ingestion/kev_client.py` | CISA catalog daily |
-| CIRCL client | `app/query/circl_client.py` | Tier-2 fallback su cache miss |
-| OpenCVE client | `app/query/opencve_client.py` | Tier-3 background poll |
-| Sync queue | `app/workers/sync_job_worker.py` | DB-backed queue (`FOR UPDATE SKIP LOCKED`), polled 5s |
-| Scheduler | `app/workers/scheduler.py` | APScheduler — delta/epss/kev jobs |
-| Version matcher | `app/resolution/version_matcher.py` | semver + OpenSSL patch + pre-release |
-| Priority engine | `app/models/priority.py` | score 0–100 |
+| VulnCheck NVD++ / NIST NVD | Ingest | nessun dato cliente — solo `lastModified` |
+| FIRST EPSS · CISA KEV | Enrich | solo `cve_id`, mai dati interni |
+| CIRCL (fallback) | T2 | `vendor` + `product` espliciti, mai `hostname`/`ip`/`asset_id` |
+| OpenCVE (background) | T3 | `vendor`/`product` subscription |
+| vulnx (exploitability) | T4 | solo `cve_id` |
 
----
+L'enforcement è nel codice: [`OpsecAwareClient`](backend-py/app/core/http.py) ispeziona ogni request in uscita e *blocca* (con `OpsecViolationError`) qualsiasi payload che contenga IPv4, MAC, o field name come `hostname`/`asset_id`. Coperto da test: [`tests/security/test_opsec_egress.py`](backend-py/tests/security/test_opsec_egress.py).
 
-## Modello dati
+### 4. Resilienza alle API esterne
 
-Tabelle principali (DDL completo in `backend-py/alembic/versions/0001_core_tables.py`):
+- **Token bucket per provider** (`asyncio.Semaphore` configurabile) — evita di farsi bannare da NVD/VulnCheck
+- **Circuit breaker per provider** — FSM `CLOSED → OPEN → HALF_OPEN`, stato visibile su `/api/health`
+- **Coda DB-backed** — tabella `sync_jobs` con `FOR UPDATE SKIP LOCKED`, polled ogni 5s da APScheduler. Niente Redis come queue, niente race conditions.
+- **Multi-tier query con degraded mode** — se vulnx è OPEN, `/api/cves/{id}/intel` ritorna comunque i dati locali con `_meta.degraded=true`
 
-- **`cves`** — mirror locale con `raw_payload JSONB` (GIN indexed), CVSS v2/v3, EPSS score+percentile, flag `is_kev` con `kev_added_date`, `published_at`, `last_modified_at`.
-- **`products`** — inventario: `name · vendor · version` + `normalized_cpe` con `cpe_confidence` ∈ {`certain`, `uncertain`, `manual`}; counters `cve_count` / `critical_count` denormalizzati per dashboard.
-- **`cpe_resolutions`** — cache delle risoluzioni name→CPE con `match_score` rapidfuzz.
-- **`findings`** — relazione M:N product↔CVE con `status` (FSM), `match_confidence`, `priority_score`, `assigned_to`, `due_date`, `notes`.
-- **`findings_history`** — audit trail di ogni cambio di stato (`old_status → new_status`, attore, motivo).
-- **`sync_jobs`** — coda DB-backed con `target_id`, `priority`, `attempts`, lock con `FOR UPDATE SKIP LOCKED`.
-- **`sync_state`** — checkpoint per source (last_success_at, last_mod_date, total_ingested, last_error).
-- **`epss_history`** — serie storica score EPSS per CVE (cascade su delete CVE).
-
----
-
-## Algoritmo di prioritizzazione
-
-`compute_priority_score()` in `app/models/priority.py`:
+### 5. Test pyramid completo
 
 ```
-score = round(EPSS × 40)                 # 0 – 40   (probabilità reale di sfruttamento)
-      + CVSS_band                        # 0 – 25   (severity tecnica)
-        ├ CRITICAL / cvss ≥ 9.0  →  25
-        ├ HIGH     / cvss ≥ 7.0  →  18
-        ├ MEDIUM   / cvss ≥ 4.0  →  10
-        └ LOW                    →   4
-      + (is_kev ? 25 : 0)                # 0 / 25   (CISA conferma exploit attivo)
-      + recency_bonus                    # 0 – 10
-        ├ ≤ 30 giorni  →  10
-        ├ ≤ 90 giorni  →   6
-        ├ ≤ 365 giorni →   3
-        └ oltre        →   0
-       (cap 100)
+tests/
+├── unit/          # 11 file — pure functions: version matcher, priority engine, CPE normalizer, token bucket, SLA, audit masking
+├── contract/       # 6 file — respx HTTP mocks per ogni provider esterno (NVD, VulnCheck, EPSS, KEV, CIRCL, vulnx)
+├── integration/    # 6 file — testcontainers (PostgreSQL+Redis): sync queue, FSM finding, e2e smoke, migrations
+└── security/       # 2 file — OpSec egress + webhook SSRF prevention
 ```
 
-Etichette: ≥80 `CRITICAL PRIORITY` · ≥60 `HIGH` · ≥40 `MEDIUM` · <40 `MONITOR`.
-
-> **Nota di design**: pesare EPSS al 40% e KEV al 25% (al posto di un CVSS dominante) riflette la dottrina post-2022 di FIRST/SSVC: la severity tecnica conta meno della probabilità che qualcuno *stia davvero* sfruttando la CVE.
+≈3.600 LOC di test, isolati e ripetibili. `ruff` + `mypy --strict`.
 
 ---
 
-## OpSec & rete
+## Stack
 
-Vincolo di prodotto: **l'inventario asset non lascia mai il perimetro per query routine**.
+**Backend** Python 3.12 · FastAPI · asyncpg · Pydantic v2 · structlog · Alembic · APScheduler · rapidfuzz · httpx
+**Storage** PostgreSQL 16 (JSONB + GIN) · Valkey (Redis-compatible)
+**Frontend** Next.js 14 (App Router) · React 18 · Tailwind · Recharts · jsPDF
+**Tooling** uv (package manager) · ruff · mypy strict · pytest-asyncio · respx · testcontainers
+**Container** Docker Compose (4 service: postgres, valkey, backend, frontend) · multi-stage Dockerfile
 
-| Fonte | Tier | Cosa esce | Note |
-|---|---|---|---|
-| VulnCheck NVD++ | Ingest | nessun dato cliente — solo `lastModified` filter | API key richiesta, free tier |
-| NIST NVD | Ingest | nessun dato cliente | rate limit 5 req/30s senza key, 50 con key |
-| FIRST EPSS | Enrich | solo `cve_id` (mai dati interni) | batched |
-| CISA KEV | Enrich | nulla — feed pubblico statico | scarica intero catalog |
-| CIRCL | Tier 2 fallback | `vendor` + `product` espliciti | mai `hostname`/`ip`/`asset_id` |
-| OpenCVE | Tier 3 polling | `vendor`/`product` subscription | background, opzionale |
-| NVD CPE suggest | Live | termini di ricerca utente | usato solo dalla Live Search UI |
+---
 
-Il `query_engine` (`app/query/query_engine.py`) implementa la regola: **prima il DB locale, sempre**. CIRCL si attiva *solo* su `total == 0` e con CPE risolto. OpenCVE è in background, mai nell'hot path.
+## Frontend — 4 dashboard SecOps + 1 hub
+
+Oltre alla dashboard generale, il frontend espone 4 viste pensate per personas SOC distinti (cartelle `frontend/src/app/dashboards/`):
+
+| Persona | Dashboard | Componenti chiave |
+|---|---|---|
+| SOC analyst | **Triage** | Live exploitability, urgent CVE panel, priority filtering |
+| Remediation lead | **Remediation & Governance** | Findings pipeline, owner workload, SLA matrix, audit timeline, risk-acceptance lifecycle |
+| Asset owner | **Asset Exposure** | Inventory coverage, top vendors/products, EOL flags, product heatmap |
+| CISO / Manager | **Executive** | KPI trend, aging buckets, PDF export |
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screen/SOC%20triage.png" alt="SOC Triage dashboard"/><p align="center"><sub><b>SOC Triage</b> — top urgenze, nuova exploitability, KEV invecchianti, EPSS in salita</sub></p></td>
+    <td width="50%"><img src="docs/screen/remediation.png" alt="Remediation & Governance dashboard"/><p align="center"><sub><b>Remediation & Governance</b> — pipeline FSM, SLA compliance, accettazioni rischio, audit log</sub></p></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screen/asset%20exposure.png" alt="Asset Exposure dashboard"/><p align="center"><sub><b>Asset Exposure</b> — copertura inventario, top vendor per esposizione, EOL flags</sub></p></td>
+    <td width="50%"><img src="docs/screen/executive.png" alt="Executive Risk Overview"/><p align="center"><sub><b>Executive</b> — risk score, KEV con finding aperti, SLA breached, trend & velocity remediation</sub></p></td>
+  </tr>
+</table>
 
 ---
 
 ## Quick start
 
-### Prerequisiti
-
-| Tool | Versione | Install |
-|---|---|---|
-| Python | ≥ 3.12 | `brew install python@3.12` |
-| uv | latest | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| Docker | ≥ 24 | Docker Desktop |
-| docker compose | v2 | bundled con Docker Desktop |
-
 ### Full stack (Docker Compose)
 
 ```bash
 cp .env.example .env
-# minimo: POSTGRES_PASSWORD, REDIS_PASSWORD, VULNCHECK_API_KEY
+# minimo: POSTGRES_PASSWORD, REDIS_PASSWORD, VULNCHECK_API_KEY (free tier su vulncheck.com)
 
 docker compose up --build
-docker compose logs -f backend
 ```
 
 - Frontend → http://localhost:3000
-- API → http://localhost:3001
-- API docs (Swagger) → http://localhost:3001/api/docs
+- API + Swagger → http://localhost:3001/api/docs
 - Health → http://localhost:3001/api/health
 
-### Dev locale (senza Docker per il backend)
+### Dev locale (backend hot-reload, infra in Docker)
 
 ```bash
 cd backend-py
-uv venv --python 3.12
-uv sync --extra dev
+uv venv --python 3.12 && uv sync --extra dev
 
 cd .. && docker compose up postgres valkey -d
-
 cd backend-py
-DATABASE_URL="postgresql://cve_user:<pass>@localhost:5433/cve_management" \
-  uv run alembic upgrade head
-
-DATABASE_URL="postgresql://cve_user:<pass>@localhost:5433/cve_management" \
-REDIS_URL="redis://:<pass>@localhost:6380" \
-VULNCHECK_API_KEY="<key>" \
-  uv run uvicorn app.main:app --reload --port 8000
+DATABASE_URL=postgresql://cve_user:<pass>@localhost:5433/cve_management uv run alembic upgrade head
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-### Variabili di ambiente principali
-
-| Var | Required | Default | Descrizione |
-|---|---|---|---|
-| `DATABASE_URL` | sì | — | DSN asyncpg PostgreSQL |
-| `REDIS_URL` | sì | — | Valkey/Redis URL |
-| `VULNCHECK_API_KEY` | sì\* | — | NVD++ — fonte primaria CVE (\*free tier) |
-| `NVD_API_KEY` | no | — | alza il rate limit a 50 req/30s |
-| `OPENCVE_API_KEY` | no | — | abilita Tier-3 polling |
-| `ALLOWED_ORIGIN` | no | `http://localhost:3000` | CORS origin |
-| `AUTO_MIGRATE` | no | `true` | esegue Alembic in startup |
-| `DELTA_SYNC_INTERVAL_HOURS` | no | `1` | frequenza delta sync |
-| `LOG_LEVEL` | no | `INFO` | `DEBUG` / `INFO` / `WARNING` |
-
----
-
-## API di riferimento
-
-Tutti gli endpoint sono prefissati con `/api`. Documentazione interattiva: `/api/docs`.
-
-### Inventory
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/products` | lista prodotti + active sync job |
-| `POST` | `/api/products` | crea prodotto + enqueue sync |
-| `POST` | `/api/products/bulk` | import bulk (max 500/req) |
-| `POST` | `/api/products/resync-all` | re-sync globale (priority 100) |
-| `POST` | `/api/products/{id}/sync` | sync manuale singolo prodotto |
-| `GET` | `/api/products/{id}/sync-status` | stato del job + counters |
-| `DELETE` | `/api/products/{id}` | elimina + invalida cache |
-
-### CVEs
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/cves` | lista filtrabile (severity, kev, min_epss, min_priority, keyword, year) |
-| `GET` | `/api/cves/{cve_id}` | dettaglio + `affected_products` |
-| `GET` | `/api/cves/{cve_id}/intel` | **(P3)** intel aggregato: core CVE + EPSS + KEV + PoC/Nuclei + affected + priority breakdown. Query `?refresh=true` forza un round-trip a vulnx (subject to circuit breaker / daily-limit). Cache Redis 10 min. Risponde con `_meta.degraded=true` se vulnx non è disponibile. |
-| `GET` | `/api/cves/export` | CSV con BOM (Excel-friendly), max 10k row |
-
-### Findings
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/findings` | lista con `status`, `owner`, paginazione |
-| `GET` | `/api/findings/stats` | counters per stato (FSM) |
-| `PATCH` | `/api/findings/{product_id}/{cve_id}` | aggiorna stato/owner/due/note + history |
-| `GET` | `/api/findings/{product_id}/{cve_id}/history` | audit trail |
-
-### Live (real-time, fonte esterna)
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/live` | NVD live (q / cpe / id, severity, date range) |
-| `GET` | `/api/circl?vendor=…&product=…` | CIRCL search |
-| `GET` | `/api/circl/products?vendor=…` | autocomplete prodotti CIRCL |
-| `GET` | `/api/cpe-suggest?q=…` | NVD CPE autocomplete |
-
-### Dashboard
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/dashboard` | aggregati + top product + EPSS distribution + priority distribution (cache 5 min) |
-| `GET` | `/api/dashboard/timeline` | serie temporale 12 mesi (CRITICAL/HIGH/KEV) |
-
-### System & Health
-
-| Verb | Path | Descrizione |
-|---|---|---|
-| `GET` | `/api/health` | status + circuit breakers + sync_state + scheduler jobs |
-| `GET` | `/api/health/ready` | readiness probe (k8s-friendly) |
-| `GET` | `/api/health/metrics` | counters HTTP + per-provider + latency p50/p95/p99 |
-| `GET` | `/api/system/status` | latency probe di tutti i servizi esterni |
-| `GET` | `/api/system/config` | configurazione runtime con secret mask |
-| `PATCH` | `/api/system/config` | override config in Valkey (sopravvive restart) |
-
-### Esempi
+### Test
 
 ```bash
-# Aggiungi un prodotto manualmente
-curl -X POST http://localhost:3001/api/products \
-  -H "Content-Type: application/json" \
-  -d '{"name":"nginx","vendor":"nginx","version":"1.18.0"}'
-
-# Trigger sync manuale
-curl -X POST http://localhost:3001/api/products/1/sync
-
-# Aggiorna lo stato di un finding
-curl -X PATCH http://localhost:3001/api/findings/1/CVE-2024-1234 \
-  -H "Content-Type: application/json" \
-  -d '{"status":"in_review","actor":"analyst@example.com","reason":"Investigating"}'
-
-# Stato sync + circuit breakers
-curl -s http://localhost:3001/api/health | jq '{sync_state, circuit_breakers}'
-
-# Metriche provider
-curl -s http://localhost:3001/api/health/metrics | jq '.providers'
+cd backend-py
+uv run pytest tests/unit/ tests/contract/ -v   # no Docker
+uv run pytest tests/integration/ -v -s         # testcontainers (richiede Docker)
+uv run pytest --cov=app --cov-report=term-missing
 ```
+
+Variabili principali: `DATABASE_URL`, `REDIS_URL`, `VULNCHECK_API_KEY` (richiesta), `NVD_API_KEY` (opzionale, alza rate limit a 50 req/30s), `OPENCVE_API_KEY`, `VULNX_API_KEY`, `OPSEC_ENFORCEMENT=true`. Lista completa in [`.env.example`](.env.example).
 
 ---
 
-## Layout del repository
+## Modello dati (essenziale)
+
+```
+products (inventory)            cves (mirror)              findings (M:N)
+┌───────────────────┐           ┌───────────────────┐     ┌────────────────────┐
+│ id, name, vendor, │           │ cve_id (PK),      │     │ product_id, cve_id │
+│ version,          │  ───┐     │ raw_payload JSONB,│     │ status (FSM),      │
+│ normalized_cpe,   │     │     │ cvss, epss_score, │     │ match_confidence,  │
+│ cpe_confidence,   │     ├──── │ is_kev, kev_date, │ ────│ priority_score,    │
+│ cve_count         │     │     │ has_public_poc,   │     │ assigned_to,       │
+└───────────────────┘     │     │ has_template      │     │ due_date           │
+                          │     └───────────────────┘     └────────────────────┘
+   cpe_resolutions ◄──────┘                                       │
+   (rapidfuzz cache)                                              ▼
+                                                          findings_history
+                                                          (audit trail FSM)
+
+   sync_jobs (DB-backed queue, FOR UPDATE SKIP LOCKED)
+   sync_state (last_success_at per source)
+   epss_history (serie storica score)
+   risk_acceptance, audit_log, exec_snapshots (governance)
+```
+
+8 migrations Alembic: [`backend-py/alembic/versions/`](backend-py/alembic/versions/).
+
+---
+
+## API — endpoint principali
+
+Documentazione interattiva: `/api/docs`. Tutti prefissati `/api`.
+
+| Area | Endpoint chiave |
+|---|---|
+| Inventory | `GET/POST /products`, `POST /products/bulk`, `POST /products/{id}/sync` |
+| CVE | `GET /cves` (severity, kev, min_epss, min_priority, year), `GET /cves/{id}/intel` (aggregato vulnx + degraded mode), `GET /cves/export` (CSV BOM) |
+| Findings | `GET /findings`, `PATCH /findings/{product_id}/{cve_id}` (FSM + history) |
+| Live (real-time) | `GET /live` (NVD), `GET /circl`, `GET /cpe-suggest` |
+| Dashboard | `GET /dashboard`, `GET /dashboard/timeline` |
+| Governance | `risk-acceptance`, `sla`, `audit`, `webhooks` |
+| Health | `GET /health` (circuit breakers + sync_state + scheduler), `GET /health/metrics` (latency p50/p95/p99) |
+
+---
+
+## Layout repository
 
 ```
 cve-management/
-├── backend-py/                    # backend Python primario
+├── backend-py/              # backend Python
 │   ├── app/
-│   │   ├── api/routers/           # products, cves, findings, dashboard, live,
-│   │   │                          # cpe_suggest, circl_router, system, health
-│   │   ├── core/                  # config, db pool, cache, logging, metrics, migrations
-│   │   ├── ingestion/             # VulnCheck/NVD/EPSS/KEV clients,
-│   │   │                          # rate_governor, circuit_breaker, enrichment
-│   │   ├── models/                # nvd, product, finding, priority (Pydantic v2)
-│   │   ├── query/                 # query_engine multi-tier · CIRCL · OpenCVE · local_query
-│   │   ├── resolution/            # cpe_normalizer · version_matcher · cache
-│   │   └── workers/               # product_sync · sync_job_worker · scheduler
-│   ├── alembic/versions/          # 0001 core · 0002 sync · 0003 hardening · 0004 cascade
-│   └── tests/{unit,integration,contract}
-├── frontend/                      # Next.js 14 (App Router)
+│   │   ├── api/routers/     # 15 router FastAPI
+│   │   ├── core/            # config, db pool, cache, logging, metrics, http (OpsecAwareClient), ssrf
+│   │   ├── ingestion/       # client esterni + rate_governor + circuit_breaker + enrichment
+│   │   ├── models/          # Pydantic v2 (nvd, product, finding, priority, intel)
+│   │   ├── query/           # query_engine multi-tier · CIRCL · OpenCVE · vulnx_enricher
+│   │   ├── resolution/      # cpe_normalizer · version_matcher · resolution_cache
+│   │   ├── services/        # sla, audit, webhooks
+│   │   └── workers/         # scheduler, sync_job_worker, daily_snapshot, risk_acceptance_expirer
+│   ├── alembic/versions/    # 8 migrations (core → sync infra → hardening → exploitability → webhooks → risk acceptance/audit → exec snapshots)
+│   └── tests/{unit,contract,integration,security}
+├── frontend/                # Next.js 14
 │   └── src/{app,components,lib}
-│       └── components/            # CVE, Dashboard, LiveSearch, Products, Settings
-├── backend/                       # ⚠️  legacy Node.js — sostituito dal Python (vedi CLAUDE.md)
-├── docker-compose.yml
+│       └── components/      # CVE, Dashboard, Triage, Remediation, Exposure, Executive, LiveSearch, Products, Settings, Shell
+├── docker-compose.yml       # postgres + valkey + backend + frontend
 ├── .env.example
-└── CLAUDE.md                      # developer guide (dettaglio operativo)
+└── CLAUDE.md                # developer guide
 ```
 
 ---
 
-## Integrazioni esterne — analisi `vulnx` & `CVE-Intel`
+## Cosa NON c'è (perché è un MVP, non production)
 
-### Stato attuale della piattaforma vs. proposte
-
-La tua piattaforma copre **mirror + matching + prioritizzazione + remediation tracking**. Manca un asse importante: la **exploitability operativa** — *esiste un PoC pubblico? c'è un template Nuclei già pronto? c'è un advisory dettagliato di un security vendor?*
-
-EPSS dà la *probabilità statistica*, KEV conferma *exploit attivo nel wild*, ma nessuno dei due ti dice se c'è un exploit *eseguibile* — informazione che cambia drammaticamente la velocità di risposta.
-
-### `projectdiscovery/vulnx`
-
-CLI moderna su database CVE centralizzato di ProjectDiscovery. **Capability rilevanti per noi**:
-
-- ricerca Lucene (69 campi: `severity:critical AND is_kev:true AND has_template:true`)
-- flag derivati: `is_kev`, `is_template` (Nuclei), `has_poc` (GitHub PoCs), `is_remote`
-- output JSON deterministico (compatibile pipe/pipeline)
-- batch CVE input (lista o file)
-- API key opzionale per togliere rate limit
-
-### `samugit83/redamon` — CVE-Intel
-
-Wrapper agent-friendly su `vulnx` che produce **JSON strutturato per consumo automatizzato**. Aggrega 7 fonti pubbliche (NVD, KEV, EPSS, HackerOne, GitHub PoC, Nuclei templates, CPE). Tre subcommand: `id`, `search`, `filters`. Filosofia: *"always-pass output discipline"* con `--json --limit N --fields` per ottimizzare token.
-
-### Cosa puoi prendere — concretamente
-
-| Idea | Effort | Valore | Dove agganciarla |
-|---|---|---|---|
-| **1. Aggiungere flag `has_public_poc` e `has_nuclei_template` alla tabella `cves`** | S (1 migration + nuova colonna) | ⭐⭐⭐⭐ | Migration 0005 + enrichment job |
-| **2. 4° tier nel `query_engine` per arricchimento exploitability** | M | ⭐⭐⭐⭐ | `app/query/query_engine.py` |
-| **3. Estendere il priority score con bonus PoC/template** | S | ⭐⭐⭐ | `app/models/priority.py` |
-| **4. Endpoint `/api/cves/{id}/intel`** che ritorna l'aggregato JSON enriched | S | ⭐⭐⭐ | nuovo router `intel.py` |
-| **5. Mini-DSL Lucene-like** per il filtro CVE in UI | L | ⭐⭐ | parser dedicato + traduzione in WHERE |
-| **6. Tab "Live: Exploitability" nella Live Search** che interroga vulnx per CVE-id | M | ⭐⭐⭐ | nuovo router live + componente FE |
-
-Tutte queste integrazioni sono **OpSec-compatibili**: vulnx riceve solo `cve_id` o `vendor/product`, mai dati di asset.
-
----
-
-## Roadmap di integrazione consigliata
-
-### Fase 1 — Exploitability flags (1–2 giorni)
-
-**Obiettivo**: avere in DB locale, per ogni CVE già mirrorrata, due flag in più: `has_public_poc`, `has_nuclei_template`.
-
-1. Migration Alembic 0005:
-   ```sql
-   ALTER TABLE cves
-       ADD COLUMN has_public_poc       BOOLEAN NOT NULL DEFAULT FALSE,
-       ADD COLUMN has_nuclei_template  BOOLEAN NOT NULL DEFAULT FALSE,
-       ADD COLUMN exploitability_updated_at TIMESTAMPTZ;
-   CREATE INDEX idx_cves_poc      ON cves(has_public_poc)      WHERE has_public_poc;
-   CREATE INDEX idx_cves_template ON cves(has_nuclei_template) WHERE has_nuclei_template;
-   ```
-
-2. Nuovo client `app/ingestion/vulnx_client.py` (HTTP, niente CLI):
-   - rate governor dedicato (chiave `vulnx`), default 60 req/min
-   - circuit breaker dedicato
-   - signature `async def fetch_intel(cve_ids: list[str]) -> dict[str, IntelRecord]`
-
-3. Nuovo job APScheduler `vulnx_refresh` (default 24h, simile a `epss_refresh`):
-   - select `cve_id` da `cves` con `exploitability_updated_at IS NULL OR < NOW() - 7d`
-   - batch da 50 verso vulnx
-   - update `has_public_poc`, `has_nuclei_template`, `exploitability_updated_at`
-
-4. Frontend: badge `PoC` e `Template` accanto a KEV nelle tabelle CVE/Findings.
-
-### Fase 2 — Priority score 2.0 (mezza giornata)
-
-```python
-# app/models/priority.py — aggiungi parametri opzionali
-def compute_priority_score(
-    cvss_score, severity, epss_score, is_kev, published_at,
-    has_public_poc: bool = False,        # NEW
-    has_nuclei_template: bool = False,   # NEW
-):
-    score = ... # come oggi
-    if has_nuclei_template:
-        score += 8        # exploit verificabile in massa → urgente
-    elif has_public_poc:
-        score += 5        # PoC esiste, deve essere weaponizzato
-    return min(100, max(0, score))
-```
-
-Il cap rimane 100; lo score esistente continua a funzionare se i flag mancano (default `False`).
-
-### Fase 3 — Endpoint intel unificato (mezza giornata)
-
-```http
-GET /api/cves/CVE-2024-1234/intel
-```
-Ritorna un payload formattato come quello di CVE-Intel — superset dei dati locali + flag exploitability + reference URLs (CPE, advisories, exploit-db). Utile per integrazioni downstream (SIEM, ticketing) e per agent LLM interni.
-
-### Fase 4 — 4° tier query (1–2 giorni)
-
-```
-Tier 1: local DB        ─── always first
-Tier 2: CIRCL fallback  ─── total == 0
-Tier 3: OpenCVE poll    ─── background
-Tier 4: vulnx           ─── on-demand: enrichment exploitability
-                            (NON è un fallback: è una richiesta esplicita
-                            quando l'utente apre il dettaglio CVE)
-```
-
-Trigger: chiamata a `/api/cves/{id}` con flag `?enrich=true`. Il client vulnx popola/aggiorna i flag exploitability lazily se la riga è "stale".
-
-### Fase 5 (opzionale) — DSL Lucene-like (1 settimana)
-
-Sostituire i 7 query param con un singolo `q=…` parser-driven:
-
-```
-severity:critical AND (is_kev:true OR has_template:true) AND epss:>0.5
-```
-
-Implementazione consigliata: `pyparsing` o `lark` → AST → `WHERE` SQL parametrizzato (mai string interpolation).
-
----
-
-## Operation runbook
-
-### Sync state
-
-```bash
-curl -s http://localhost:3001/api/health | jq '.sync_state'
-```
-
-Output tipico:
-```json
-[
-  {"source":"vulncheck_nvd","last_success_at":"2026-05-02T07:01:23Z",
-   "last_mod_date":"2026-05-02T06:00:00Z","total_ingested":284511,"last_error":null}
-]
-```
-
-### Circuit breakers
-
-Stati possibili: `CLOSED` (normale), `OPEN` (provider rotto, skip per cooldown), `HALF_OPEN` (probe).
-Reset manuale: nessuno — sono FSM auto-recover. Per forzarne uno via dev console, riavvia il backend.
-
-### Coda job
-
-```bash
-docker compose exec postgres psql -U cve_user -d cve_management -c \
-  "SELECT job_type, status, COUNT(*) FROM sync_jobs GROUP BY 1,2 ORDER BY 1,2;"
-```
-
-Job stuck in `running` da troppo tempo → il worker è morto. Il polling è ogni 5s, lock con `FOR UPDATE SKIP LOCKED` quindi non c'è rischio di doppio-take.
-
-### Migrazioni
-
-```bash
-cd backend-py
-uv run alembic upgrade head             # apply pending
-uv run alembic revision --autogenerate -m "vulnx_flags"
-uv run alembic downgrade -1             # rollback
-uv run alembic current                  # versione attuale
-```
-
-### Cache invalidation
-
-```bash
-docker compose exec valkey valkey-cli -a "<pass>" KEYS 'dashboard:*' | xargs -I{} \
-  docker compose exec valkey valkey-cli -a "<pass>" DEL {}
-```
-
-Il backend già invalida `dashboard:*` su ogni create/delete prodotto e ogni patch finding.
-
----
-
-## Testing
-
-```bash
-cd backend-py
-
-# unit + contract (no Docker)
-uv run pytest tests/unit/ tests/contract/ -v
-
-# integration (testcontainers: PostgreSQL + Redis)
-uv run pytest tests/integration/ -v -s
-
-# coverage report
-uv run pytest --cov=app --cov-report=term-missing
-
-# singolo file
-uv run pytest tests/unit/test_version_matcher.py -v
-```
-
-Layer di test:
-
-- **unit** — pure functions: version matcher, priority engine, CPE normalizer
-- **contract** — mock HTTP via `respx` per ogni provider esterno (NVD, VulnCheck, EPSS, KEV, CIRCL, OpenCVE)
-- **integration** — testcontainers PostgreSQL+Redis per query engine, sync queue, FSM finding
-
----
-
-## Troubleshooting
-
-| Sintomo | Causa probabile | Fix |
+| Mancanza | Perché non bloccante per il lab | Cosa servirebbe per production |
 |---|---|---|
-| `startup.vulncheck_key_missing` warning ma il backend si avvia | `VULNCHECK_API_KEY` mancante | la piattaforma funziona ma senza ingestion primaria — registrati su vulncheck.com (free tier) |
-| Health `degraded` su `valkey` | password sbagliata o porta occupata | confronta `REDIS_URL` in `.env` con `valkey/...` in compose |
-| Tutti i prodotti restano `sync_status=pending` | scheduler non parte | verifica `scheduler_jobs` su `/api/health`; se vuoto, controlla i log per `startup.scheduler_started` |
-| CVE 0 ma il prodotto ha CPE risolto | rate-limit NVD attivo | con `NVD_API_KEY` impostata il limite va da 5 a 50 req/30s |
-| Live Search NVD ritorna 429 | rate limit NVD | la cache è 2 min: aspetta o aggiungi `NVD_API_KEY` |
-| `priority_score = NULL` | enrichment EPSS non ancora passato | il job gira ogni 24h. Forza con un manual sync prodotto, oppure abbassa `EPSS_REFRESH_INTERVAL_HOURS` |
-| Frontend riceve CORS error | `ALLOWED_ORIGIN` non matcha | il default è `http://localhost:3000`. In produzione setta esplicitamente |
+| Auth / RBAC | l'app gira su localhost / network interna | OIDC (Keycloak/Auth0), RBAC con ruoli analyst/manager/admin |
+| Multi-tenancy | single-tenant per design | row-level security, scope sui product/finding |
+| HA / scaling orizzontale | rate governor è `asyncio.Semaphore` single-instance | governor distribuito (Redis-based), leader election scheduler |
+| CI/CD pipeline | test girano in locale | GitHub Actions: ruff + mypy + pytest + build image + scan |
+| Penetration test | non è stato fatto | review esterna, SAST/DAST, secret scanning |
+| Frontend in TypeScript | JSX è sufficiente per un MVP | migrazione TS + test (Playwright/Vitest) |
 
 ---
 
-## Licenza & contributi
+## Decisioni di design (note dal rewrite)
 
-Vedere `CLAUDE.md` per la guida sviluppatore di dettaglio (struttura del codice, pattern asyncpg, convenzioni di logging strutturato, anti-pattern Node.js identificati nel rewrite).
+Il backend è un **rewrite Python** di un primo MVP Node.js (cartella `backend/` legacy). Il rewrite è stato un'opportunità per:
 
-Architettura completa e ADR: `~/.claude/plans/lovely-splashing-zephyr.md`.
+- portare la logica di **version matching** preservandone i casi-limite (OpenSSL `1.0.2k`, pre-release `-rc1`, range `versionStartIncluding ≤ v < versionEndExcluding`)
+- introdurre `asyncpg` al posto del pool sync precedente (latency p95 sull'endpoint `/cves` ↓)
+- formalizzare 13 anti-pattern del primo backend (callback hell ingestion, no rate limit, no circuit breaker, query engine che faceva sempre fallback esterno…) in ADR e fixarli nel design a 4 layer
+- aggiungere il livello **OpSec** (egress filter `OpsecAwareClient`) che nel primo MVP non esisteva
+- aggiungere un test layer `security/` con egress + SSRF prevention sui webhook
+
+---
+
+## Roadmap evolutiva
+
+- **Auth**: OIDC + RBAC (analyst / manager / admin / read-only auditor)
+- **CI/CD**: GitHub Actions (lint + type + test + image build + Trivy scan)
+- **Sigstore-style supply chain**: SBOM + signed image
+- **Distributed rate governor**: spostare il TokenBucket su Redis per scaling orizzontale
+- **Mini-DSL Lucene-like** per filtri CVE (`severity:critical AND is_kev:true AND epss:>0.5`) → AST → SQL parametrizzato
+- **WebSocket dashboard updates** al posto del polling 30s
+- **Frontend → TypeScript** + Playwright e2e
+
+---
+
+## License & Credits
+
+Progetto personale a scopo formativo / portfolio. Le fonti dati sono pubbliche:
+
+- [NIST NVD](https://nvd.nist.gov/)
+- [VulnCheck NVD++](https://vulncheck.com/) (free community tier)
+- [FIRST EPSS](https://www.first.org/epss/)
+- [CISA KEV Catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
+- [CIRCL](https://www.circl.lu/)
+- [OpenCVE](https://www.opencve.io/)
+- [ProjectDiscovery vulnx](https://github.com/projectdiscovery/vulnx)
+
+Modello di prioritizzazione ispirato a **SSVC** (CISA/CMU SEI) e alla guidance FIRST sui pesi EPSS post-2022.
+
+---
+
+*Sviluppo guidato da [Claude Code](https://claude.com/claude-code) — il design a 4 layer, gli ADR, e l'analisi degli anti-pattern del backend Node.js sono il risultato di sessioni di pair-programming con sub-agent specializzati (architect, security, db, devops).*
