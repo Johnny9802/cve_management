@@ -269,7 +269,7 @@ cve-management/
 | Auth / RBAC | l'app gira su localhost / network interna | OIDC (Keycloak/Auth0), RBAC con ruoli analyst/manager/admin |
 | Multi-tenancy | single-tenant per design | row-level security, scope sui product/finding |
 | HA / scaling orizzontale | rate governor è `asyncio.Semaphore` single-instance | governor distribuito (Redis-based), leader election scheduler |
-| CI/CD pipeline | test girano in locale | GitHub Actions: ruff + mypy + pytest + build image + scan |
+| Image build + supply chain | il workflow attuale fa lint/type/test, ma non builda l'immagine | aggiungere build Docker + Trivy/Grype scan + SBOM (Syft) + signed image |
 | Penetration test | non è stato fatto | review esterna, SAST/DAST, secret scanning |
 | Frontend in TypeScript | JSX è sufficiente per un MVP | migrazione TS + test (Playwright/Vitest) |
 
