@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-
 # ─── Version component ───────────────────────────────────────────────────────
 
 @dataclass(frozen=True, slots=True)
@@ -150,10 +149,7 @@ def is_version_in_range(installed_version: str, cpe_entry: dict[str, Any]) -> bo
         return False
     if end_inc and compare_versions(installed, end_inc) > 0:
         return False
-    if end_exc and compare_versions(installed, end_exc) >= 0:
-        return False
-
-    return True
+    return not (end_exc and compare_versions(installed, end_exc) >= 0)
 
 
 # ─── Product ↔ CVE matching ───────────────────────────────────────────────────

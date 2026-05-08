@@ -3,13 +3,19 @@
 Each provider gets its own TokenBucket instance. Use build_governors() to
 get a pre-configured registry keyed by provider name.
 """
+from __future__ import annotations
+
 import asyncio
 import time
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import structlog
 
 from app.core.config import Settings
+
+if TYPE_CHECKING:
+    from app.core.metrics import ProviderMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +38,7 @@ class TokenBucket:
     def __post_init__(self) -> None:
         self._tokens = self.capacity
         self._last_refill = time.monotonic()
-        self._metrics: "ProviderMetrics | None" = None  # type: ignore[name-defined]
+        self._metrics: ProviderMetrics | None = None
 
     def _refill(self) -> None:
         now = time.monotonic()
@@ -60,7 +66,7 @@ class TokenBucket:
                 self._metrics.record_rate_limited()
             await asyncio.sleep(wait)
 
-    def attach_metrics(self, metrics: "ProviderMetrics") -> None:  # type: ignore[name-defined]
+    def attach_metrics(self, metrics: ProviderMetrics) -> None:
         self._metrics = metrics
 
     @property

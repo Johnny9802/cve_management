@@ -13,9 +13,9 @@ This client chunks automatically at _CHUNK_DAYS (119) to stay within the limit.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -80,10 +80,10 @@ class NvdClient:
         Delta sync (last_mod_date set): uses lastModStartDate/lastModEndDate
         to pick up only CVEs modified since the last checkpoint.
         """
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         is_initial = last_mod_date is None
         # Initial load: current year only — older CVEs fetched live on demand
-        start = last_mod_date or datetime(now.year, 1, 1, tzinfo=timezone.utc)
+        start = last_mod_date or datetime(now.year, 1, 1, tzinfo=UTC)
 
         current = start
         while current < now:

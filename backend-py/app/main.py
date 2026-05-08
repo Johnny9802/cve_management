@@ -1,25 +1,33 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware.error_handler import add_error_handler
-from app.api.routers import health
-from app.api.routers import products, cves, findings, dashboard
-from app.api.routers import live, cpe_suggest, circl_router
+from app.api.routers import audit as audit_router
+from app.api.routers import (
+    circl_router,
+    cpe_suggest,
+    cves,
+    dashboard,
+    findings,
+    health,
+    live,
+    products,
+)
 from app.api.routers import intel as intel_router
-from app.api.routers import webhooks as webhooks_router
 from app.api.routers import risk_acceptance as risk_acceptance_router
 from app.api.routers import sla as sla_router
-from app.api.routers import audit as audit_router
 from app.api.routers import system as system_router
+from app.api.routers import webhooks as webhooks_router
 from app.core.cache import create_redis
 from app.core.config import get_settings
 from app.core.db import create_pool
 from app.core.logging import configure_logging
+from app.core.metrics import MetricsRegistry
 from app.core.migrations import run_migrations
 from app.ingestion.circuit_breaker import build_circuit_breakers
 from app.ingestion.epss_client import EpssClient
@@ -28,7 +36,6 @@ from app.ingestion.nvd_client import NvdClient
 from app.ingestion.rate_governor import build_governors
 from app.ingestion.vulncheck_client import VulnCheckClient
 from app.ingestion.vulnx_client import VulnxClient
-from app.core.metrics import MetricsRegistry
 from app.query.circl_client import CirclClient
 from app.query.opencve_client import OpenCveClient
 from app.workers.scheduler import create_scheduler

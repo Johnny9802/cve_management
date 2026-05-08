@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -52,12 +52,12 @@ class _DailyCounter:
 
     limit: int
     _count: int = 0
-    _day: date = field(default_factory=lambda: datetime.now(tz=timezone.utc).date())
+    _day: date = field(default_factory=lambda: datetime.now(tz=UTC).date())
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def consume(self, n: int = 1) -> bool:
         async with self._lock:
-            today = datetime.now(tz=timezone.utc).date()
+            today = datetime.now(tz=UTC).date()
             if today != self._day:
                 self._day = today
                 self._count = 0

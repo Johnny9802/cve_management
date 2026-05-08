@@ -10,7 +10,7 @@ import pytest
 import respx
 
 from app.core.config import Settings
-from app.ingestion.kev_client import KevClient, _CACHE_KEY
+from app.ingestion.kev_client import _CACHE_KEY, KevClient
 from app.ingestion.rate_governor import TokenBucket
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"

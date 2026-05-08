@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import gzip
 import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -118,7 +117,7 @@ async def test_delta_single_page() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
 
     async for record in client.iter_delta(since):
         records.append(record)
@@ -150,9 +149,9 @@ async def test_delta_paginates_multiple_pages() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     # Only a single 119-day chunk for this date range
-    end = datetime(2024, 4, 28, tzinfo=timezone.utc)
+    end = datetime(2024, 4, 28, tzinfo=UTC)
 
     async for record in client.iter_delta(since):
         records.append(record)
@@ -181,7 +180,7 @@ async def test_delta_handles_429_retry() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for record in client.iter_delta(since):
         records.append(record)
 

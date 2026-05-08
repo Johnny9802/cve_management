@@ -103,8 +103,8 @@ async def create_product(
                 body.vendor.strip() if body.vendor else None,
                 body.cpe_keyword.strip() if body.cpe_keyword else None,
             )
-        except asyncpg.UniqueViolationError:
-            raise HTTPException(status_code=409, detail="Product already exists")
+        except asyncpg.UniqueViolationError as err:
+            raise HTTPException(status_code=409, detail="Product already exists") from err
 
         job_id = await _enqueue_sync(conn, row["id"], priority=10)
 

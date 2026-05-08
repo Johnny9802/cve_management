@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import asyncpg
 import httpx
@@ -48,12 +48,12 @@ _UPDATE_SUB_SQL = """
 
 def _parse_dt(s: str | None) -> datetime:
     if not s:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
     except ValueError:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
 
 @dataclass

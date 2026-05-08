@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import asyncpg
 import structlog
@@ -101,7 +101,7 @@ _INSERT_SQL = """
 
 async def capture_daily_snapshot(pool: asyncpg.Pool) -> SnapshotResult:
     t0 = time.monotonic()
-    today = datetime.now(tz=timezone.utc).date()
+    today = datetime.now(tz=UTC).date()
 
     async with pool.acquire() as conn:
         cve_row = await conn.fetchrow(

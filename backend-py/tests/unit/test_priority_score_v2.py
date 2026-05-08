@@ -1,9 +1,7 @@
 """Unit tests for Priority Score 2.0 — exploitability bonus (P2)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from app.models.priority import (
     EXPL_WEIGHT_NUCLEI,
@@ -14,7 +12,7 @@ from app.models.priority import (
 
 
 def _now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 # ─────────────────────────────────── regression vs v1 ───────────────────────

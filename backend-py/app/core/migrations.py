@@ -1,7 +1,9 @@
 import os
+
 import structlog
-from alembic import command
 from alembic.config import Config
+
+from alembic import command
 
 logger = structlog.get_logger(__name__)
 

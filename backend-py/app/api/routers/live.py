@@ -19,7 +19,7 @@ Pagination strategy for keyword searches:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -185,7 +185,7 @@ async def live_search(
         raise
     except httpx.RequestError as exc:
         logger.error("live_search.request_error", error=str(exc))
-        raise HTTPException(status_code=502, detail="NVD non raggiungibile — riprova")
+        raise HTTPException(status_code=502, detail="NVD non raggiungibile — riprova") from exc
 
     total = body.get("totalResults", 0)
     vulns = body.get("vulnerabilities", [])

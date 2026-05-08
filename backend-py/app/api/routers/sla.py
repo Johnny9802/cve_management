@@ -12,7 +12,7 @@ typical finding count is well within an in-memory pass.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import asyncpg
@@ -64,7 +64,7 @@ async def list_findings_by_sla(
         """,
     )
 
-    today = datetime.now(tz=timezone.utc).date()
+    today = datetime.now(tz=UTC).date()
     out: list[dict[str, Any]] = []
     for r in rows:
         sla_state = compute_sla_state(
@@ -100,7 +100,7 @@ async def sla_summary(pool: asyncpg.Pool = Depends(_get_pool)) -> dict[str, Any]
         JOIN cves c ON c.cve_id = f.cve_id
         """,
     )
-    today = datetime.now(tz=timezone.utc).date()
+    today = datetime.now(tz=UTC).date()
 
     counters: dict[str, dict[str, int]] = {}
     totals_by_state: dict[str, int] = {s: 0 for s in _VALID_STATES}
@@ -140,7 +140,7 @@ async def mttr(
     falling back to `findings.updated_at` if no history row matches.
     """
     days = _parse_period(period)
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(tz=UTC) - timedelta(days=days)
 
     rows = await pool.fetch(
         """

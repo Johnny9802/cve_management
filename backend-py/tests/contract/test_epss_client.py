@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 import respx
 
 from app.core.config import Settings
-from app.ingestion.epss_client import EpssClient, EpssScore
+from app.ingestion.epss_client import EpssClient
 from app.ingestion.rate_governor import TokenBucket
 
 EPSS_BASE = "https://api.first.org/data/v1/epss"
@@ -101,7 +101,7 @@ async def test_fetch_scores_only_fetches_uncached() -> None:
     cached = {"epss:CVE-2021-44228": json.dumps({"epss": 0.97565, "percentile": 1.0})}
     redis = _make_redis(cached)
 
-    result = await client.fetch_scores(["CVE-2021-44228", "CVE-2022-0001"], redis)
+    await client.fetch_scores(["CVE-2021-44228", "CVE-2022-0001"], redis)
     await client.aclose()
 
     assert mock.called

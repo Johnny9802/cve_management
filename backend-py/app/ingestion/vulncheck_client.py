@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import gzip
 import json
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -88,12 +88,12 @@ class VulnCheckClient:
         Automatically chunks ranges > 119 days (NVD hard limit).
         If last_mod_date is None, yields all CVEs (full initial load via API).
         """
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         if last_mod_date is None:
             # Full initial load: last 7 years (older CVEs from VulnCheck S3 bulk)
-            now_vc = datetime.now(tz=timezone.utc)
-            start = datetime(now_vc.year, 1, 1, tzinfo=timezone.utc)
+            now_vc = datetime.now(tz=UTC)
+            start = datetime(now_vc.year, 1, 1, tzinfo=UTC)
         else:
             start = last_mod_date
 

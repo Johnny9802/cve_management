@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -260,7 +260,7 @@ async def cve_intel(
             "factors": factors,
         },
         "_meta": {
-            "fetched_at": datetime.now(tz=timezone.utc).isoformat(),
+            "fetched_at": datetime.now(tz=UTC).isoformat(),
             "exploitability_age_hours": expl_age_h,
             "degraded": degraded,
             "degraded_reason": degraded_reason,
@@ -314,8 +314,8 @@ def _hours_since(ts: Any) -> float | None:
         return None
     if not hasattr(ts, "tzinfo"):
         return None
-    pub = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-    delta = datetime.now(tz=timezone.utc) - pub
+    pub = ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+    delta = datetime.now(tz=UTC) - pub
     return round(delta.total_seconds() / 3600.0, 2)
 
 

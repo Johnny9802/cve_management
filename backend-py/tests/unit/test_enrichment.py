@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import date
 
 import pytest
 
 from app.ingestion.enrichment import EnrichResult
 from app.ingestion.epss_client import EpssScore
-
 
 # ------------------------------------------------------------------ #
 # EpssScore NamedTuple                                                 #

@@ -130,11 +130,10 @@ def create_scheduler(
     async def _retention_cleanup() -> None:
         log = logger.bind(job="retention_cleanup")
         try:
-            async with db_pool.acquire() as conn:
-                async with conn.transaction():
-                    # Delete dependent records first (epss_history has no CASCADE)
-                    await conn.execute(
-                        """
+            async with db_pool.acquire() as conn, conn.transaction():
+                # Delete dependent records first (epss_history has no CASCADE)
+                await conn.execute(
+                    """
                         DELETE FROM epss_history
                         WHERE cve_id IN (
                             SELECT cve_id FROM cves
@@ -142,14 +141,14 @@ def create_scheduler(
                               AND is_kev = FALSE
                         )
                         """
-                    )
-                    result = await conn.execute(
-                        """
+                )
+                result = await conn.execute(
+                    """
                         DELETE FROM cves
                         WHERE EXTRACT(YEAR FROM published_at) < EXTRACT(YEAR FROM NOW())
                           AND is_kev = FALSE
                         """
-                    )
+                )
             deleted = int(result.split()[-1]) if result else 0
             if deleted:
                 log.info("scheduler.retention.done", deleted=deleted)

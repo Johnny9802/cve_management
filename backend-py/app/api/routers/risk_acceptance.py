@@ -18,7 +18,7 @@ be put behind a reverse-proxy auth layer until proper auth is added.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import asyncpg
@@ -56,7 +56,7 @@ class RiskAcceptanceCreate(BaseModel):
     @field_validator("expires_at")
     @classmethod
     def _future(cls, v: date) -> date:
-        if v <= datetime.now(tz=timezone.utc).date():
+        if v <= datetime.now(tz=UTC).date():
             raise ValueError("expires_at must be in the future")
         return v
 

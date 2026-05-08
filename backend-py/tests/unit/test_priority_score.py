@@ -1,15 +1,13 @@
 """Unit tests for priority score engine."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
-import pytest
+from datetime import UTC, datetime, timedelta
 
 from app.models.priority import compute_priority_score, get_priority_label
 
 
 def _now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+    return datetime.now(tz=UTC)
 
 
 class TestComputePriorityScore:

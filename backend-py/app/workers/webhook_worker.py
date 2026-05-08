@@ -27,8 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import httpx
@@ -54,7 +53,7 @@ _BACKOFF_SECONDS: tuple[int, ...] = (
 )
 
 
-_CLAIM_SQL = """
+_CLAIM_SQL = f"""
     WITH due AS (
         SELECT id
         FROM webhook_deliveries
@@ -67,12 +66,12 @@ _CLAIM_SQL = """
         LIMIT $1
     )
     UPDATE webhook_deliveries d
-    SET locked_until = NOW() + INTERVAL '%(lock)s seconds',
+    SET locked_until = NOW() + INTERVAL '{_LOCK_DURATION_SECONDS} seconds',
         attempts     = attempts + 1
     FROM due
     WHERE d.id = due.id
     RETURNING d.id, d.webhook_id, d.event_type, d.payload, d.attempts, d.max_attempts
-""" % {"lock": _LOCK_DURATION_SECONDS}
+"""
 
 
 _MARK_SUCCESS_SQL = """
@@ -233,7 +232,7 @@ async def _record_failure(
             status_code,
             response_body,
             error,
-            datetime.now(tz=timezone.utc),
+            datetime.now(tz=UTC),
         )
         logger.warning(
             "webhook.delivery.giving_up",
@@ -245,7 +244,7 @@ async def _record_failure(
         return
 
     delay = _next_attempt_delay(next_attempt + 1)
-    new_schedule = datetime.now(tz=timezone.utc) + timedelta(seconds=delay)
+    new_schedule = datetime.now(tz=UTC) + timedelta(seconds=delay)
     await pool.execute(
         _MARK_FAILURE_SQL,
         delivery["id"],
@@ -269,9 +268,8 @@ async def drain_pending_deliveries(
 ) -> int:
     """Process up to ``_BATCH_SIZE`` due deliveries. Returns the count
     of attempts made (success or failure)."""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            claimed = await conn.fetch(_CLAIM_SQL, _BATCH_SIZE)
+    async with pool.acquire() as conn, conn.transaction():
+        claimed = await conn.fetch(_CLAIM_SQL, _BATCH_SIZE)
     if not claimed:
         return 0
 

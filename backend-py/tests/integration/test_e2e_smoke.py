@@ -9,13 +9,14 @@ Run with:
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from unittest.mock import AsyncMock
 
 import asyncpg
 import pytest
 
-from tests.integration.conftest import seed_cve
 from app.workers.product_sync import sync_product
+from tests.integration.conftest import seed_cve
 
 
 def _redis_mock():
@@ -80,28 +81,26 @@ class TestE2EHappyPath:
 
         # ── Step 5: Transition to in_review ──────────────────────────────────
         finding_id = finding["id"]
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "UPDATE findings SET status = 'in_review' WHERE id = $1", finding_id
-                )
-                await conn.execute(
-                    """INSERT INTO findings_history (finding_id, old_status, new_status, changed_by)
+        async with db_pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "UPDATE findings SET status = 'in_review' WHERE id = $1", finding_id
+            )
+            await conn.execute(
+                """INSERT INTO findings_history (finding_id, old_status, new_status, changed_by)
                        VALUES ($1, 'open', 'in_review', 'analyst')""",
-                    finding_id,
-                )
+                finding_id,
+            )
 
         # ── Step 6: Transition to remediated ─────────────────────────────────
-        async with db_pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "UPDATE findings SET status = 'remediated' WHERE id = $1", finding_id
-                )
-                await conn.execute(
-                    """INSERT INTO findings_history (finding_id, old_status, new_status, changed_by)
+        async with db_pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "UPDATE findings SET status = 'remediated' WHERE id = $1", finding_id
+            )
+            await conn.execute(
+                """INSERT INTO findings_history (finding_id, old_status, new_status, changed_by)
                        VALUES ($1, 'in_review', 'remediated', 'analyst')""",
-                    finding_id,
-                )
+                finding_id,
+            )
 
         # ── Step 7: Verify final state and audit trail ───────────────────────
         async with db_pool.acquire() as conn:
@@ -126,8 +125,7 @@ class TestE2EHappyPath:
         WHEN the same CVE is upserted from NVD (better data)
         THEN the record is updated, not duplicated
         """
-        import json
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         payload_circl = {"id": "CVE-2024-E2E-002", "summary": "CIRCL data"}
         payload_nvd = {
@@ -140,7 +138,7 @@ class TestE2EHappyPath:
         }
 
         async with db_pool.acquire() as conn:
-            now = datetime.now(tz=timezone.utc)
+            now = datetime.now(tz=UTC)
             # First insert: from CIRCL
             await conn.execute(
                 """INSERT INTO cves (cve_id, source, raw_payload, published_at, last_modified_at)

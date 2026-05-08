@@ -27,7 +27,7 @@ a future caller forgets.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import structlog
@@ -77,7 +77,7 @@ def select_stale(
 ) -> list[str]:
     """Filter ``cve_rows`` (mappings with ``cve_id`` + optional
     ``exploitability_updated_at``) to those that need a refresh."""
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=stale_hours)
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=stale_hours)
     out: list[str] = []
     seen: set[str] = set()
     for row in cve_rows:
@@ -90,7 +90,7 @@ def select_stale(
             out.append(cid)
             continue
         if hasattr(upd, "tzinfo") and upd.tzinfo is None:
-            upd = upd.replace(tzinfo=timezone.utc)
+            upd = upd.replace(tzinfo=UTC)
         if upd < cutoff:
             out.append(cid)
     return out
@@ -160,7 +160,7 @@ async def _do_refresh(
 
     update_rows: list[tuple] = []
     not_found_rows: list[tuple] = []
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     for cid in cve_ids:
         rec = intel.get(cid)
         if rec is None:
@@ -171,10 +171,9 @@ async def _do_refresh(
         )
 
     if update_rows:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(
-                    """
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(
+                """
                     UPDATE cves
                     SET has_public_poc            = $1,
                         has_nuclei_template       = $2,
@@ -182,22 +181,21 @@ async def _do_refresh(
                         updated_at                = NOW()
                     WHERE cve_id = $4
                     """,
-                    update_rows,
-                )
+                update_rows,
+            )
         await _recompute_finding_priorities(pool, [r[3] for r in update_rows])
 
     if not_found_rows:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(
-                    """
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(
+                """
                     UPDATE cves
                     SET exploitability_updated_at = $1
                     WHERE cve_id = $2
                       AND exploitability_updated_at IS DISTINCT FROM $1
                     """,
-                    not_found_rows,
-                )
+                not_found_rows,
+            )
 
     await _release_many(redis, cve_ids)
     logger.info(
@@ -261,9 +259,8 @@ async def _recompute_finding_priorities(
             updates.append((new_score, r["id"]))
 
     if updates:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(
-                    "UPDATE findings SET priority_score = $1, updated_at = NOW() WHERE id = $2",
-                    updates,
-                )
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(
+                "UPDATE findings SET priority_score = $1, updated_at = NOW() WHERE id = $2",
+                updates,
+            )

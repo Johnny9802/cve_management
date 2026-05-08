@@ -1,8 +1,6 @@
 """Unit tests for the in-process metrics registry."""
 from __future__ import annotations
 
-import pytest
-
 from app.core.metrics import HttpMetrics, MetricsRegistry, ProviderMetrics
 
 

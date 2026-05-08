@@ -1,7 +1,7 @@
 """Unit tests for the SLA helper (P8)."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from app.services.sla import (
     AT_RISK_THRESHOLD_DAYS,
@@ -14,7 +14,7 @@ from app.services.sla import (
 
 
 def _utc(dt_str: str) -> datetime:
-    return datetime.fromisoformat(dt_str).replace(tzinfo=timezone.utc)
+    return datetime.fromisoformat(dt_str).replace(tzinfo=UTC)
 
 
 # ─────────────────────────────────────────────────── due-date matrix

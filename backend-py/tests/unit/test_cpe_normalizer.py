@@ -1,8 +1,6 @@
 """Unit tests for CPE normalizer helpers (pure-function parts)."""
 from __future__ import annotations
 
-import pytest
-
 from app.resolution.cpe_normalizer import (
     _build_cpe,
     _extract_hints,

@@ -9,13 +9,14 @@ In the Docker self-hosted setup (POSTGRES_USER=cve_user), this runs fine because
 the docker postgres image creates POSTGRES_USER with superuser privileges.
 In managed environments (RDS, Supabase) run this migration as the master user.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+
 from alembic import op
 
 revision: str = "0003"
-down_revision: Union[str, None] = "0002"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0002"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

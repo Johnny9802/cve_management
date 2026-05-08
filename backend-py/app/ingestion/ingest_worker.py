@@ -1,12 +1,11 @@
 """Ingestion orchestration: upsert logic, Arq job handlers, sync_state checkpoint."""
 from __future__ import annotations
 
-import asyncio
-import json
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, AsyncGenerator
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import asyncpg
 import structlog
@@ -121,7 +120,7 @@ async def run_bulk_ingest(
         raise
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
-    await _checkpoint(pool, source, datetime.now(tz=timezone.utc), processed)
+    await _checkpoint(pool, source, datetime.now(tz=UTC), processed)
     logger.info(
         "ingest.bulk_complete",
         processed=processed,
@@ -155,7 +154,7 @@ async def run_delta_ingest(
         raise
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
-    await _checkpoint(pool, source, datetime.now(tz=timezone.utc), processed)
+    await _checkpoint(pool, source, datetime.now(tz=UTC), processed)
     logger.info(
         "ingest.delta_complete",
         processed=processed,
@@ -206,11 +205,10 @@ async def job_delta_ingest(ctx: dict) -> dict:
 
 async def run_nvd_delta_ingest(
     pool: asyncpg.Pool,
-    client: "NvdClient",
+    client: NvdClient,
     circuit: CircuitBreaker,
 ) -> IngestResult:
     """Incremental NVD API v2 sync — used when VulnCheck is unavailable."""
-    from app.ingestion.nvd_client import NvdClient as _NvdClient  # local import avoids circular
 
     t0 = time.monotonic()
     source = "nvd_api"
@@ -230,7 +228,7 @@ async def run_nvd_delta_ingest(
         raise
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
-    await _checkpoint(pool, source, datetime.now(tz=timezone.utc), processed)
+    await _checkpoint(pool, source, datetime.now(tz=UTC), processed)
     logger.info(
         "ingest.nvd_delta_complete",
         processed=processed,
@@ -244,7 +242,7 @@ async def run_nvd_delta_ingest(
 async def run_smart_delta(
     pool: asyncpg.Pool,
     vc_client: VulnCheckClient | None,
-    nvd_client: "NvdClient",
+    nvd_client: NvdClient,
     circuits: dict[str, CircuitBreaker],
 ) -> IngestResult:
     """Try VulnCheck delta first; fall back to NVD API v2 on failure or circuit open."""
@@ -291,7 +289,7 @@ async def _get_last_mod_date(pool: asyncpg.Pool, source: str) -> datetime | None
     if row and row["last_mod_date"]:
         dt = row["last_mod_date"]
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     return None
 

@@ -50,7 +50,16 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# E501 line too long — handled by black/formatter, not lint
+# B008 function-call-in-default-argument — false positive for FastAPI Depends()
+# E701/E702 multiple statements on one line — accepted in tests/migrations for compactness
+# E741 ambiguous variable name — leaves a few legacy `l`/`I` in tests
+# SIM102/SIM105/SIM108 — collapsible-if / suppressible-exception / if-else-expr — stylistic, low value
+ignore = ["E501", "B008", "E701", "E702", "E741", "SIM102", "SIM105", "SIM108"]
+
+[tool.ruff.lint.per-file-ignores]
+# tests can have unused imports (re-exports) and assertions that look unused
+"tests/**" = ["F401", "F841"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

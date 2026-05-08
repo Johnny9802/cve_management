@@ -8,8 +8,8 @@ Verifies:
 """
 from __future__ import annotations
 
-import pytest
 import asyncpg
+import pytest
 
 from tests.integration.conftest import seed_cve, seed_finding, seed_product
 
@@ -81,7 +81,6 @@ class TestFindingStatusTransitions:
 
     async def test_sync_upsert_preserves_false_positive(self, db_pool: asyncpg.Pool, clean_db):
         """ON CONFLICT ... WHERE NOT IN ('false_positive') must not overwrite human decision."""
-        import json
         from app.models.priority import compute_priority_score
 
         async with db_pool.acquire() as conn:

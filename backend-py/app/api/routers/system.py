@@ -7,7 +7,7 @@ PATCH /api/system/config        — update a config item (stored in Valkey, surv
 """
 from __future__ import annotations
 
-import json
+import contextlib
 import time
 from typing import Any
 
@@ -105,7 +105,7 @@ async def system_status(request: Request, service: str | None = None) -> dict:
         # HTTP probes in parallel
         http_tasks = {k: _probe_http(v) for k, v in _PROBES.items()}
         http_results = await asyncio.gather(*http_tasks.values())
-        for k, r in zip(http_tasks.keys(), http_results):
+        for k, r in zip(http_tasks.keys(), http_results, strict=False):
             results[k] = r
         results["database"] = await _probe_db(request)
         results["redis"]    = await _probe_redis(request)
@@ -184,12 +184,10 @@ async def update_config(body: ConfigUpdate, request: Request) -> dict:
     await redis.set(f"{_REDIS_CFG_PREFIX}{body.key}", body.value.strip())
 
     # Reload relevant settings in app state
-    settings = get_settings()
+    get_settings()
     if body.key == "OPENCVE_API_KEY":
-        try:
+        with contextlib.suppress(Exception):
             request.app.state.opencve_client.settings.__dict__["opencve_api_key"] = body.value.strip()
-        except Exception:
-            pass
 
     logger.info("system.config_updated", key=body.key)
     return {"ok": True, "key": body.key}

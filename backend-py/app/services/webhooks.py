@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -80,7 +80,7 @@ def build_finding_event(
         "is_kev": is_kev,
         "has_public_poc": has_public_poc,
         "has_nuclei_template": has_nuclei_template,
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        "timestamp": datetime.now(tz=UTC).isoformat(),
     }
     if extra:
         # Allow extension only with whitelisted keys.
@@ -105,14 +105,14 @@ async def is_duplicate(
     """Return True if a delivery row for the same (webhook, event, key)
     has been *enqueued* in the last 5 minutes (regardless of outcome)."""
     row = await pool.fetchrow(
-        """
+        f"""
         SELECT 1 FROM webhook_deliveries
         WHERE webhook_id = $1
           AND event_type = $2
           AND dedup_key  = $3
-          AND created_at > NOW() - INTERVAL '%(s)s seconds'
+          AND created_at > NOW() - INTERVAL '{_DEDUP_WINDOW_SECONDS} seconds'
         LIMIT 1
-        """ % {"s": _DEDUP_WINDOW_SECONDS},
+        """,
         webhook_id,
         event_type,
         dedup_key,

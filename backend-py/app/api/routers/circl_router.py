@@ -9,7 +9,7 @@ GET /api/circl/products            — list products for a vendor (autocomplete)
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import structlog
@@ -34,7 +34,7 @@ def _parse_dt(s: str | None) -> datetime | None:
         return None
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
     except ValueError:
         return None
 

@@ -13,8 +13,6 @@ import asyncio
 import asyncpg
 import pytest
 
-from tests.integration.conftest import clean_db
-
 
 async def _insert_job(
     conn: asyncpg.Connection,
@@ -93,8 +91,8 @@ class TestSyncJobClaiming:
 
     async def test_priority_ordering(self, db_pool: asyncpg.Pool, clean_db):
         async with db_pool.acquire() as conn:
-            low_id = await _insert_job(conn, target_id="1", priority=10)
-            high_id = await _insert_job(conn, target_id="2", priority=100)
+            await _insert_job(conn, target_id="1", priority=10)
+            await _insert_job(conn, target_id="2", priority=100)
             critical_id = await _insert_job(conn, target_id="3", priority=999)
 
         # Highest priority should be claimed first
@@ -107,7 +105,7 @@ class TestSyncJobClaiming:
     ):
         async with db_pool.acquire() as conn:
             # Insert first job
-            first_id = await _insert_job(conn, target_id="42")
+            await _insert_job(conn, target_id="42")
 
             # Try to insert same job_type+target_id (unique partial index)
             row = await conn.fetchrow(

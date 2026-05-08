@@ -1,5 +1,5 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 import asyncpg
 import structlog
@@ -29,6 +29,5 @@ async def acquire(pool: asyncpg.Pool) -> AsyncGenerator[asyncpg.Connection, None
 @asynccontextmanager
 async def transaction(pool: asyncpg.Pool) -> AsyncGenerator[asyncpg.Connection, None]:
     """Context manager that wraps a connection in an explicit transaction."""
-    async with pool.acquire() as conn:
-        async with conn.transaction():
-            yield conn  # type: ignore[misc]
+    async with pool.acquire() as conn, conn.transaction():
+        yield conn  # type: ignore[misc]

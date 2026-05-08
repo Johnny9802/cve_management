@@ -5,11 +5,8 @@ WHY so regressions are immediately understandable.
 """
 from __future__ import annotations
 
-import pytest
-
 from app.resolution.version_matcher import (
     Confidence,
-    MatchResult,
     compare_versions,
     extract_affected_cpes,
     extract_cpe_version,
@@ -18,7 +15,6 @@ from app.resolution.version_matcher import (
     normalise_slug,
     parse_cpe_vendor_product,
 )
-
 
 # ─── compare_versions ────────────────────────────────────────────────────────
 

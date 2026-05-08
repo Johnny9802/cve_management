@@ -193,10 +193,9 @@ async def sync_product(
         matched += 1
 
     if finding_rows:
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(_FINDING_UPSERT_SQL, finding_rows)
-                await conn.execute(_STATS_UPDATE_SQL, product_id)
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(_FINDING_UPSERT_SQL, finding_rows)
+            await conn.execute(_STATS_UPDATE_SQL, product_id)
     else:
         await pool.execute(_STATUS_UPDATE_SQL, "synced", product_id)
 

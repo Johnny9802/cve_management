@@ -8,14 +8,13 @@ Verifies the full sync_product() flow end-to-end:
 """
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
 import pytest
 
-from tests.integration.conftest import seed_cve, seed_product
 from app.workers.product_sync import SyncResult, _build_search_pattern, sync_product
+from tests.integration.conftest import seed_cve, seed_product
 
 
 def _make_redis_mock() -> MagicMock:

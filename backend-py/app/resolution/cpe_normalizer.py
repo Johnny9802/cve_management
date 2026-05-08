@@ -20,11 +20,11 @@ Thresholds (configurable via Settings):
 from __future__ import annotations
 
 import re
-from typing import Any
 
 import asyncpg
 import structlog
-from rapidfuzz import fuzz, process as rfprocess
+from rapidfuzz import fuzz
+from rapidfuzz import process as rfprocess
 
 from app.core.config import Settings
 from app.models.product import CpeResolution

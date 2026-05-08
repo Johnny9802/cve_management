@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import asyncpg
 import httpx
@@ -66,14 +66,14 @@ def _circl_severity(score: float | None) -> str | None:
 
 def _parse_circl_dt(s: str | None) -> datetime:
     if not s:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
     try:
         dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
-        return datetime.now(tz=timezone.utc)
+        return datetime.now(tz=UTC)
 
 
 @dataclass
@@ -223,11 +223,10 @@ class CirclClient:
         if not cve_rows:
             return 0
 
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(_UPSERT_CVE_SQL, cve_rows)
-                await conn.executemany(_UPSERT_FINDING_SQL, finding_rows)
-                inserted = len(cve_rows)
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(_UPSERT_CVE_SQL, cve_rows)
+            await conn.executemany(_UPSERT_FINDING_SQL, finding_rows)
+            inserted = len(cve_rows)
 
         return inserted
 

@@ -1,8 +1,7 @@
 """Contract tests for NvdClient using respx to mock httpx calls."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -71,7 +70,7 @@ def _make_client(api_key: str = "") -> NvdClient:
 # ------------------------------------------------------------------ #
 
 def test_fmt_date_format() -> None:
-    dt = datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    dt = datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)
     result = _fmt_date(dt)
     assert result == "2024-01-15T10:30:00.000 UTC+00:00"
 
@@ -87,7 +86,7 @@ async def test_iter_delta_single_page() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for record in client.iter_delta(since):
         records.append(record)
 
@@ -105,7 +104,7 @@ async def test_iter_delta_empty_response() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for record in client.iter_delta(since):
         records.append(record)
 
@@ -153,7 +152,7 @@ async def test_iter_delta_paginates() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for record in client.iter_delta(since):
         records.append(record)
 
@@ -182,7 +181,7 @@ async def test_iter_delta_retries_on_429() -> None:
 
     client = _make_client()
     records = []
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for record in client.iter_delta(since):
         records.append(record)
 
@@ -202,7 +201,7 @@ async def test_iter_delta_chunks_large_range() -> None:
     respx.get(NVD_BASE).mock(return_value=httpx.Response(200, json=EMPTY_NVD_RESPONSE))
 
     client = _make_client()
-    since = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2023, 1, 1, tzinfo=UTC)
     # force end to be ~300 days from since — achieved by using a fixed "now" indirectly
     # The client uses datetime.now() internally; as long as since is 300+ days ago this fires ≥3 chunks
     async for _ in client.iter_delta(since):
@@ -230,7 +229,7 @@ async def test_api_key_sent_as_header() -> None:
     respx.get(NVD_BASE).mock(side_effect=handler)
 
     client = _make_client(api_key="test-nvd-key-123")
-    since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    since = datetime(2024, 1, 1, tzinfo=UTC)
     async for _ in client.iter_delta(since):
         pass
 

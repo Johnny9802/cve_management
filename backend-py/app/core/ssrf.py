@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 from urllib.parse import urlparse
 
 import structlog

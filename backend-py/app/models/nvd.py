@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -13,7 +13,7 @@ def _parse_dt(s: str) -> datetime:
     s = s.replace("Z", "+00:00")
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -36,7 +36,7 @@ class NvdCveRecord(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     @classmethod
-    def from_nvd_cve(cls, cve: dict[str, Any]) -> "NvdCveRecord":
+    def from_nvd_cve(cls, cve: dict[str, Any]) -> NvdCveRecord:
         """Parse from an NVD 2.0 inner CVE object.
 
         Accepts both:

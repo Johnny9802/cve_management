@@ -69,7 +69,7 @@ class EpssClient:
         # Bulk cache check via MGET
         cache_keys = [f"epss:{cid}" for cid in cve_ids]
         cached_values = await redis.mget(*cache_keys)
-        for cve_id, cached in zip(cve_ids, cached_values):
+        for cve_id, cached in zip(cve_ids, cached_values, strict=False):
             if cached:
                 try:
                     d = json.loads(cached)

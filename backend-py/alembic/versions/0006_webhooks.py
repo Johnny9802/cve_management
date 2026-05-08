@@ -21,13 +21,14 @@ Schema follows the brief spec. Notes:
 * GRANTs added for ``cve_sync_worker`` (write) and ``cve_query_engine``
   (read) — see migration 0003 for the rationale.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+
 from alembic import op
 
 revision: str = "0006"
-down_revision: Union[str, None] = "0005"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0005"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

@@ -146,8 +146,8 @@ async def update_finding(
             from datetime import date
             try:
                 due_date = date.fromisoformat(body.due_date)
-            except ValueError:
-                raise HTTPException(status_code=422, detail="due_date must be YYYY-MM-DD")
+            except ValueError as err:
+                raise HTTPException(status_code=422, detail="due_date must be YYYY-MM-DD") from err
 
         async with conn.transaction():
             row = await conn.fetchrow(

@@ -19,7 +19,7 @@ States derived for the dashboards (matching the brief):
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 
 SLA_DAYS: dict[str, int] = {
@@ -48,15 +48,12 @@ def compute_due_date(
     None, fallback to ``today()`` (defensive — should not happen because
     findings always have created_at).
     """
-    if is_kev:
-        days = SLA_KEV_OVERRIDE
-    else:
-        days = SLA_DAYS.get((severity or "").upper(), DEFAULT_SLA_DAYS)
-    base = published_at or created_at or datetime.now(tz=timezone.utc)
+    days = SLA_KEV_OVERRIDE if is_kev else SLA_DAYS.get((severity or "").upper(), DEFAULT_SLA_DAYS)
+    base = published_at or created_at or datetime.now(tz=UTC)
     if not isinstance(base, datetime):
-        base = datetime(base.year, base.month, base.day, tzinfo=timezone.utc)
+        base = datetime(base.year, base.month, base.day, tzinfo=UTC)
     elif base.tzinfo is None:
-        base = base.replace(tzinfo=timezone.utc)
+        base = base.replace(tzinfo=UTC)
     return (base + timedelta(days=days)).date()
 
 
@@ -66,7 +63,7 @@ def compute_sla_state(
     due_date: date | None,
     today: date | None = None,
 ) -> SlaState:
-    today = today or datetime.now(tz=timezone.utc).date()
+    today = today or datetime.now(tz=UTC).date()
     if finding_status in {"remediated", "closed", "false_positive"}:
         return "met"
     if due_date is None:
@@ -79,7 +76,7 @@ def compute_sla_state(
 
 
 def days_overdue(due_date: date | None, today: date | None = None) -> int:
-    today = today or datetime.now(tz=timezone.utc).date()
+    today = today or datetime.now(tz=UTC).date()
     if due_date is None or due_date >= today:
         return 0
     return (today - due_date).days

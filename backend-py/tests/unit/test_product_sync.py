@@ -1,8 +1,6 @@
 """Unit tests for product sync helpers (pure functions — no I/O)."""
 from __future__ import annotations
 
-import pytest
-
 from app.workers.product_sync import _build_search_pattern
 
 
@@ -78,7 +76,7 @@ class TestVersionMatcherInSyncContext:
         assert result.affected is True
 
     def test_no_matching_cpe_returns_uncertain(self):
-        from app.resolution.version_matcher import is_cve_affecting_product, Confidence
+        from app.resolution.version_matcher import Confidence, is_cve_affecting_product
         product = {"name": "nginx", "vendor": "nginx", "version": "2.0.0", "normalized_cpe": None}
         cpes = [{"criteria": "cpe:2.3:a:apache:httpd:2.4.50:*:*:*:*:*:*:*"}]
         result = is_cve_affecting_product(product, cpes)
@@ -86,7 +84,7 @@ class TestVersionMatcherInSyncContext:
         assert result.affected is True  # conservative fallback
 
     def test_version_outside_range_excluded(self):
-        from app.resolution.version_matcher import is_cve_affecting_product, Confidence
+        from app.resolution.version_matcher import Confidence, is_cve_affecting_product
         product = {"name": "nginx", "vendor": "nginx", "version": "1.22.0", "normalized_cpe": None}
         cpes = [{"criteria": "cpe:2.3:a:nginx:nginx:*:*:*:*:*:*:*:*",
                  "versionStartIncluding": "1.0.0", "versionEndExcluding": "1.20.0"}]

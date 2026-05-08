@@ -3,12 +3,11 @@
 Requires Docker for testcontainers. Run with:
     uv run pytest tests/integration/test_migrations.py -v
 """
-import pytest
 import asyncpg
+import pytest
 from testcontainers.postgres import PostgresContainer
 
 from app.core.migrations import run_migrations
-
 
 EXPECTED_TABLES = {
     "cves",

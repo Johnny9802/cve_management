@@ -20,8 +20,7 @@ two flags are mutually exclusive: if both are present we award 8 (not
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 # Public weights — exposed so ``factor breakdown`` in /api/cves/{id}/intel
 # can label contributions without re-deriving constants.
@@ -65,8 +64,8 @@ def compute_priority_score(
 
     # 4. Recency (0-10)
     if published_at:
-        now = datetime.now(tz=timezone.utc)
-        pub = published_at if published_at.tzinfo else published_at.replace(tzinfo=timezone.utc)
+        now = datetime.now(tz=UTC)
+        pub = published_at if published_at.tzinfo else published_at.replace(tzinfo=UTC)
         age_days = (now - pub).days
         if age_days <= 30:
             score += 10
@@ -125,11 +124,11 @@ def compute_priority_factors(
         contributions["kev_contribution"] = KEV_WEIGHT
 
     if published_at:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         pub = (
             published_at
             if published_at.tzinfo
-            else published_at.replace(tzinfo=timezone.utc)
+            else published_at.replace(tzinfo=UTC)
         )
         age_days = (now - pub).days
         if age_days <= 30:

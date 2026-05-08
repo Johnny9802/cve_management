@@ -108,11 +108,10 @@ async def run_epss_refresh(
         if not epss_rows:
             return
 
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.executemany(_UPDATE_EPSS_SQL, epss_rows)
-                await conn.executemany(_INSERT_EPSS_HISTORY_SQL, history_rows)
-                updated += len(epss_rows)
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(_UPDATE_EPSS_SQL, epss_rows)
+            await conn.executemany(_INSERT_EPSS_HISTORY_SQL, history_rows)
+            updated += len(epss_rows)
 
         logger.info("epss.refresh.done", updated=updated, skipped=skipped)
 
@@ -169,11 +168,10 @@ async def run_kev_refresh(
         if not to_update:
             return
 
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                result = await conn.executemany(_UPDATE_KEV_SQL, to_update)
-                # executemany doesn't return a rowcount easily; track via to_update length
-                updated = len(to_update)
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.executemany(_UPDATE_KEV_SQL, to_update)
+            # executemany doesn't return a rowcount easily; track via to_update length
+            updated = len(to_update)
 
         logger.info("kev.refresh.done", updated=updated, skipped=skipped)
 

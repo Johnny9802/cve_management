@@ -8,7 +8,7 @@ Field name compatibility with Node.js frontend:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
@@ -112,7 +112,7 @@ async def export_csv(
             _escape_csv(r["description"]),
         ]))
 
-    filename = f"cve-export-{datetime.now(tz=timezone.utc).date()}.csv"
+    filename = f"cve-export-{datetime.now(tz=UTC).date()}.csv"
     return Response(
         content="﻿" + "\n".join(lines),  # BOM for Excel
         media_type="text/csv; charset=utf-8",

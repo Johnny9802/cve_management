@@ -14,9 +14,6 @@ Retry policy:
 """
 from __future__ import annotations
 
-import asyncio
-import time
-
 import asyncpg
 import structlog
 from redis.asyncio import Redis
@@ -28,11 +25,11 @@ logger = structlog.get_logger(__name__)
 POLL_INTERVAL_SECONDS = 5
 _LOCK_TTL = "5 minutes"
 
-_CLAIM_SQL = """
+_CLAIM_SQL = f"""
     UPDATE sync_jobs
     SET status       = 'running',
         started_at   = NOW(),
-        locked_until = NOW() + INTERVAL '{ttl}',
+        locked_until = NOW() + INTERVAL '{_LOCK_TTL}',
         attempts     = attempts + 1
     WHERE id = (
         SELECT id FROM sync_jobs
@@ -43,7 +40,7 @@ _CLAIM_SQL = """
         LIMIT 1
     )
     RETURNING *
-""".format(ttl=_LOCK_TTL)
+"""
 
 _COMPLETE_SQL = """
     UPDATE sync_jobs

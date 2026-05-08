@@ -9,7 +9,7 @@ narrow and avoiding stale URL lists.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +20,7 @@ class IntelRecord:
     poc_urls: list[str] = field(default_factory=list)
     template_paths: list[str] = field(default_factory=list)
     references: list[str] = field(default_factory=list)
-    fetched_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    fetched_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
 
     def summary(self) -> dict[str, object]:
         """Compact dict used to update the ``cves`` row."""
