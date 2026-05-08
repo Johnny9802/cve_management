@@ -289,12 +289,29 @@ Il backend è un **rewrite Python** di un primo MVP Node.js (cartella `backend/`
 
 ## Roadmap evolutiva
 
+### Verso production (hardening)
+
 - **Auth**: OIDC + RBAC (analyst / manager / admin / read-only auditor)
-- **CI/CD**: GitHub Actions (lint + type + test + image build + Trivy scan)
-- **Sigstore-style supply chain**: SBOM + signed image
-- **Distributed rate governor**: spostare il TokenBucket su Redis per scaling orizzontale
-- **Mini-DSL Lucene-like** per filtri CVE (`severity:critical AND is_kev:true AND epss:>0.5`) → AST → SQL parametrizzato
+- **Multi-tenancy**: row-level security PostgreSQL, `tenant_id` scoping su product / finding / audit
+- **Distributed rate governor + leader election**: spostare TokenBucket su Redis e coordinare lo scheduler per scaling orizzontale
+- **Image build + supply chain**: build Docker in CI, SBOM (Syft), scan vulnerabilità (Trivy/Grype), signing (Cosign/Sigstore)
+
+### Vulnerability intelligence
+
+- **Tier 5 — AI explanation layer (local-first)**: Ollama + Llama 3.1 8B / Qwen 2.5 / Phi-4 per remediation advice, threat narrative e contestualizzazione finding. Cloud (Claude/GPT) opt-in solo per reasoning complesso, dietro lo stesso `OpsecAwareClient` egress gate degli altri provider. Il deterministico (EPSS / CVSS / KEV) resta sovrano sul priority score; l'LLM produce **spiegazioni**, non decisioni.
+- **SBOM / VEX**: import CycloneDX e SPDX al posto del CSV; export VEX (CSAF 2.0) per dichiarare `not_affected` / `fixed` / `under_investigation` ai consumer
+- **Scanner ingestion**: connettori per Trivy / Grype / Wazuh / Tenable / Qualys → riuso del resolution layer esistente, niente doppio matching
+- **Asset criticality multipliers**: campi `business_impact` / `exposure` / `data_classification` per asset → moltiplicatori applicati al priority score (oggi è solo CVE-side)
+- **Reachability analysis**: dato un SBOM + call-graph applicativo, distinguere "package vulnerabile installato" da "funzione vulnerabile *effettivamente raggiungibile*" (pattern Snyk/Endor)
+- **Compliance mapping**: mappare finding a controlli NIS2 / DORA / ISO 27001 / NIST 800-53 per export audit
+
+### Operations & integrations
+
+- **OpenTelemetry**: tracing distribuito affiancato a structlog (oggi solo log strutturato)
+- **Outbound ticketing**: webhook Jira / ServiceNow / Linear su trigger SLA breach, KEV, priority ≥ 80
+- **Patch advisor**: integrazione OSV.dev + Debian DSA + RHEL Security Advisories per suggerire upgrade path concreti per OS / package
 - **WebSocket dashboard updates** al posto del polling 30s
+- **Mini-DSL Lucene-like** per filtri CVE (`severity:critical AND is_kev:true AND epss:>0.5`) → AST → SQL parametrizzato
 - **Frontend → TypeScript** + Playwright e2e
 
 ---
