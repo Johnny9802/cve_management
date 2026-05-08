@@ -16,7 +16,7 @@
 
 ## Cosa fa, in una riga
 
-Carica l'inventario software (CSV/API), lo normalizza in CPE, scarica le CVE rilevanti dai feed pubblici, le arricchisce con EPSS+KEV+exploitability, calcola un **priority score 0–100** e produce finding tracciabili attraverso una FSM (`open → in_review → remediated | accepted_risk`).
+Carica l'inventario software (CSV/API), lo normalizza in CPE, scarica le CVE rilevanti dai feed pubblici, le arricchisce con EPSS+KEV+exploitability, calcola un **priority score 0–100** e produce finding tracciabili attraverso una FSM (`open → in_review → planned → remediated | accepted_risk | closed`).
 
 ## Perché esiste
 
@@ -97,7 +97,7 @@ tests/
 └── security/       # 2 file — OpSec egress + webhook SSRF prevention
 ```
 
-≈3.600 LOC di test, isolati e ripetibili. `ruff` + `mypy --strict`.
+≈3.600 LOC di test, isolati e ripetibili. Linting `ruff`, type-check `mypy` (strict mode aspirazionale: il config è strict, le violazioni residue sono in remediation).
 
 ---
 
