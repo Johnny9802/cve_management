@@ -27,8 +27,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: "backend-py/pyproject.toml"
+          enable-cache: false  # cache stale tra ruff>=0.4 vecchio e nuovo pin >=0.14
+          # TODO: ri-abilitare con cache-dependency-glob una volta committato uv.lock
 
       - name: Install dependencies
         # No uv.lock present; resolving from pyproject.toml is acceptable for MVP.
@@ -59,8 +59,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: "backend-py/pyproject.toml"
+          enable-cache: false  # cache stale tra ruff>=0.4 vecchio e nuovo pin >=0.14
+          # TODO: ri-abilitare con cache-dependency-glob una volta committato uv.lock
 
       - name: Install dependencies
         run: uv sync --extra dev
