@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.middleware.error_handler import add_error_handler
+from app.api.middleware.security_headers import SecurityHeadersMiddleware
 from app.api.routers import audit as audit_router
 from app.api.routers import (
     circl_router,
@@ -182,9 +183,10 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.allowed_origin],
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "X-Request-ID"],
+        allow_headers=["Content-Type", "X-Request-ID", "Authorization"],
         expose_headers=["X-Request-ID"],
     )
+    app.add_middleware(SecurityHeadersMiddleware, environment=settings.environment)
 
     add_error_handler(app)
     app.include_router(health.router)
