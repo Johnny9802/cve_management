@@ -15,6 +15,8 @@ import asyncpg
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
+from app.core.rate_limit import limiter
+
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/cves", tags=["cves"])
 
@@ -46,7 +48,9 @@ def _escape_csv(v: Any) -> str:
 # ── routes ────────────────────────────────────────────────────────────────────
 
 @router.get("/export")
+@limiter.limit("3/minute")
 async def export_csv(
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
     product_id: int | None = None,
     severity: str | None = None,

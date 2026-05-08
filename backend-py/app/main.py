@@ -5,9 +5,13 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.middleware.error_handler import add_error_handler
 from app.api.middleware.security_headers import SecurityHeadersMiddleware
+from app.core.rate_limit import limiter
 from app.api.routers import audit as audit_router
 from app.api.routers import (
     circl_router,
@@ -187,6 +191,12 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
     app.add_middleware(SecurityHeadersMiddleware, environment=settings.environment)
+
+    # Rate limiting (S1.5). Default 200/min/IP; health probes exempt;
+    # heavy endpoints decorated individually with stricter caps.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     add_error_handler(app)
     app.include_router(health.router)

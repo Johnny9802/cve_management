@@ -30,16 +30,21 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 RUN uv venv /opt/venv
 
 # Copy ONLY pyproject.toml so dep layer is cached when project code changes.
-# TODO: when uv.lock is committed, change to:
-#       COPY pyproject.toml uv.lock ./
-#       RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --no-install-project
 COPY pyproject.toml ./
 
-# Install runtime deps into /opt/venv. --no-install-project skips building the
-# project itself (source not present in this stage). --no-dev excludes the
-# dev-dependencies group. uv reads dependencies from pyproject.toml.
+# Install runtime deps into /opt/venv. We use `uv pip install` reading the
+# deps via Python's tomllib (always present in 3.11+). This is more robust
+# than `uv sync` for projects without a [build-system] table or a
+# committed uv.lock — `uv sync` silently installs nothing in that case.
+# When a uv.lock is committed, switch to:
+#   COPY pyproject.toml uv.lock ./
+#   RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --no-install-project
 ENV VIRTUAL_ENV=/opt/venv
-RUN uv sync --no-dev --no-install-project
+RUN python3 -c "import tomllib; \
+        print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" \
+    > /tmp/requirements.txt && \
+    uv pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 # ── Stage 2: runtime image ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

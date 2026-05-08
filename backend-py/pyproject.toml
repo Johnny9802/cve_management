@@ -17,6 +17,9 @@ dependencies = [
     "alembic>=1.13.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "redis[hiredis]>=5.0.0",
+    "slowapi>=0.1.9",
+    "bcrypt>=4.1.0",
+    "pyjwt>=2.9.0",
 ]
 
 [project.optional-dependencies]
