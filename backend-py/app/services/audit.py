@@ -179,7 +179,7 @@ async def record_in_tx(
         target_type,
         target_id,
         json.dumps(masked_diff) if masked_diff is not None else None,
-        json.dumps(masked_meta) if masked_meta is not None else None,
+        json.dumps(masked_meta) if masked_meta is not None else "{}",
         ip_address,
         user_agent,
     )
