@@ -72,6 +72,21 @@ class Settings(BaseSettings):
     # Run Alembic migrations automatically at startup (safe: idempotent)
     auto_migrate: bool = True
 
+    # ── Auth (Sprint 1 — see docs/adr/0001-auth-strategy.md) ─────────────
+    # JWT secret. In production this MUST be overridden via env var; the
+    # lifespan validator refuses to start if the dev sentinel leaks
+    # into environment="production".
+    jwt_secret: str = "dev-secret-do-not-use-in-prod-change-me-immediately"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 60
+    refresh_token_ttl_days: int = 7
+
+    # Initial admin user seeded on first startup if the users table is
+    # empty. Both must be set; otherwise the seed is a no-op and the
+    # operator is expected to provision the first admin out-of-band.
+    admin_email: str = ""
+    admin_password: str = ""
+
     @property
     def nvd_request_delay(self) -> float:
         if self.nvd_api_key:

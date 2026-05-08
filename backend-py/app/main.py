@@ -13,6 +13,7 @@ from app.api.middleware.error_handler import add_error_handler
 from app.api.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.rate_limit import limiter
 from app.api.routers import audit as audit_router
+from app.api.routers import auth as auth_router
 from app.api.routers import (
     circl_router,
     cpe_suggest,
@@ -54,12 +55,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(settings.log_level)
     logger.info("startup.begin", environment=settings.environment)
 
+    # Refuse to start with the dev JWT secret in production. If anyone
+    # ever rolls a prod build with an unset JWT_SECRET, the loud failure
+    # below is much better than a silent forgery vulnerability.
+    if settings.environment == "production" and settings.jwt_secret.startswith("dev-secret"):
+        raise RuntimeError(
+            "JWT_SECRET is the dev sentinel; set a strong unique value "
+            "before running in production (see docs/adr/0001-auth-strategy.md)"
+        )
+
     if settings.auto_migrate:
         await asyncio.to_thread(run_migrations, settings.database_url)
 
     app.state.db_pool = await create_pool(settings.database_url)
     app.state.redis = await create_redis(settings.redis_url)
     app.state.settings = settings
+
+    # Seed the first admin user if the table is empty and the env vars
+    # are set. This makes "first run with credentials in env" produce a
+    # working login; subsequent runs are a no-op. See ADR 0001.
+    if settings.admin_email and settings.admin_password:
+        from app.services.auth_service import hash_password
+        async with app.state.db_pool.acquire() as conn:
+            existing = await conn.fetchval("SELECT COUNT(*) FROM users")
+            if existing == 0:
+                await conn.execute(
+                    """
+                    INSERT INTO users (email, password_hash, role, is_active)
+                    VALUES ($1, $2, 'admin', TRUE)
+                    """,
+                    settings.admin_email.lower(),
+                    hash_password(settings.admin_password),
+                )
+                logger.info("startup.admin_seeded", email=settings.admin_email)
     # P4 Tier 4 lazy enrichment: background tasks tracked here so the
     # lifespan can cancel them cleanly on shutdown.
     app.state.background_tasks = set()
@@ -200,6 +228,7 @@ def create_app() -> FastAPI:
 
     add_error_handler(app)
     app.include_router(health.router)
+    app.include_router(auth_router.router)
     app.include_router(products.router)
     app.include_router(cves.router)
     app.include_router(intel_router.router)
