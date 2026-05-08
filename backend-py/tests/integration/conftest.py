@@ -87,7 +87,8 @@ TRUNCATE TABLE
     sync_jobs,
     products,
     cpe_resolutions,
-    cves
+    cves,
+    users
 RESTART IDENTITY CASCADE
 """
 
