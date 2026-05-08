@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel
 
 logger = structlog.get_logger(__name__)
@@ -117,3 +117,22 @@ async def metrics(request: Request) -> dict:
         return request.app.state.metrics.snapshot()
     except AttributeError:
         return {"error": "metrics not available"}
+
+
+@router.get("/metrics", include_in_schema=False)
+async def prometheus_metrics(request: Request) -> Response:
+    """Prometheus exposition (Sprint 3 — S3.7).
+
+    Outside ``/api`` on purpose: scrapers expect the canonical
+    ``/metrics`` path. ``include_in_schema=False`` keeps it out of the
+    OpenAPI doc so the route stays operational, not part of the public
+    contract.
+    """
+    from app.core.prometheus import render, sync_breakers
+
+    breakers = getattr(request.app.state, "circuit_breakers", None)
+    if breakers:
+        sync_breakers(breakers)
+
+    body, content_type = render()
+    return Response(content=body, media_type=content_type)

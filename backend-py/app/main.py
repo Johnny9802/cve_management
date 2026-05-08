@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.middleware.error_handler import add_error_handler
+from app.api.middleware.prom_http import PrometheusHttpMiddleware
 from app.api.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.rate_limit import limiter
 from app.api.routers import audit as audit_router
@@ -33,6 +34,7 @@ from app.core.cache import create_redis
 from app.core.config import get_settings
 from app.core.db import create_pool
 from app.core.logging import configure_logging
+from app.core.sentry import init_sentry
 from app.core.metrics import MetricsRegistry
 from app.core.migrations import run_migrations
 from app.ingestion.circuit_breaker import build_circuit_breakers
@@ -54,6 +56,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
     logger.info("startup.begin", environment=settings.environment)
+    # Sentry init early so any startup error is reported. No-op if DSN empty.
+    init_sentry(
+        dsn=settings.sentry_dsn,
+        environment=settings.environment,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+    )
 
     # Refuse to start with the dev JWT secret in production. If anyone
     # ever rolls a prod build with an unset JWT_SECRET, the loud failure
@@ -219,6 +227,10 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
     app.add_middleware(SecurityHeadersMiddleware, environment=settings.environment)
+    # Prometheus HTTP counters (S3.7) — outermost so it observes the
+    # actual response status (incl. 429 from the rate limiter and 500
+    # from the error handler), not the pre-handler one.
+    app.add_middleware(PrometheusHttpMiddleware)
 
     # Rate limiting (S1.5). Default 200/min/IP; health probes exempt;
     # heavy endpoints decorated individually with stricter caps.

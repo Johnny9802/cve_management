@@ -74,6 +74,9 @@ services:
       REFRESH_TOKEN_TTL_DAYS:   ${REFRESH_TOKEN_TTL_DAYS:-7}
       ADMIN_EMAIL:          ${ADMIN_EMAIL:-}
       ADMIN_PASSWORD:       ${ADMIN_PASSWORD:-}
+      # Observability (S3.6) — DSN empty = SDK in no-op mode.
+      SENTRY_DSN:           ${SENTRY_DSN:-}
+      SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +107,8 @@ services:
     environment:
       NODE_ENV:             production
       NEXT_PUBLIC_API_URL:  http://backend:8000
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      NEXT_PUBLIC_ENVIRONMENT: ${NEXT_PUBLIC_ENVIRONMENT:-development}
     depends_on:
       backend:
         condition: service_healthy

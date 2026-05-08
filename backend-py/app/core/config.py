@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     admin_email: str = ""
     admin_password: str = ""
 
+    # ── Observability (Sprint 3 — S3.6) ──────────────────────────────────
+    # Sentry DSN. Empty = disabled (sentry_sdk treats DSN="" as a no-op
+    # via our wrapper in app/core/sentry.py). The lifespan logs once at
+    # startup so you can tell from the boot log whether it's active.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+
     @property
     def nvd_request_delay(self) -> float:
         if self.nvd_api_key:

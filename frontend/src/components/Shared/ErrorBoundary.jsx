@@ -24,6 +24,19 @@ export default class ErrorBoundary extends Component {
   componentDidCatch(error, info) {
     // eslint-disable-next-line no-console
     console.error('[ErrorBoundary]', error, info?.componentStack);
+    // Forward to Sentry if it's been initialized. captureError is a
+    // no-op when NEXT_PUBLIC_SENTRY_DSN is empty, so this stays safe
+    // in dev / portfolio mode.
+    try {
+      // Lazy import keeps Sentry out of the SSR/static bundle —
+      // ``require`` is fine here, this file is already a Client
+      // Component (the boundary needs DOM hooks).
+      // eslint-disable-next-line global-require
+      const { captureError } = require('../../lib/sentry');
+      captureError(error, { componentStack: info?.componentStack });
+    } catch {
+      /* sentry not loaded */
+    }
     if (typeof this.props.onError === 'function') {
       try {
         this.props.onError(error, info);

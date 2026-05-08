@@ -8,6 +8,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@sentry/browser": "^8.0.0",
     "axios": "^1.6.0",
     "clsx": "^2.1.0",
     "jspdf": "^2.5.1",
