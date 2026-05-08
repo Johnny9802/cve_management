@@ -1,9 +1,89 @@
 import axios from 'axios';
+import { clearSession, getAccessToken, getRefreshToken, setSession } from './auth';
 
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
 });
+
+// ── Auth interceptors (Sprint 1 — S1-FE) ─────────────────────────────────
+//
+// Request: attach the bearer token if present. Requests with
+//   `meta: { skipAuth: true }` (login, refresh) skip this.
+// Response: on 401, try one silent refresh; if that fails, clear the
+//   session and bounce to /login. The refresh attempt is guarded by an
+//   in-flight promise so concurrent 401s collapse into one refresh call.
+
+let inFlightRefresh = null;
+
+api.interceptors.request.use((config) => {
+  if (config.meta?.skipAuth) return config;
+  const token = getAccessToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+async function refreshTokens() {
+  const refresh_token = getRefreshToken();
+  if (!refresh_token) throw new Error('no refresh token');
+  const { data } = await axios.post(
+    '/api/auth/refresh',
+    { refresh_token },
+    { timeout: 10000 },
+  );
+  setSession(data);
+  return data.access_token;
+}
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const status = error?.response?.status;
+    const config = error?.config;
+    if (status !== 401 || !config || config._retried) {
+      return Promise.reject(error);
+    }
+    // Don't try to refresh if THIS request was already an auth request.
+    const url = config.url || '';
+    if (url.includes('/auth/login') || url.includes('/auth/refresh')) {
+      return Promise.reject(error);
+    }
+
+    config._retried = true;
+    try {
+      inFlightRefresh = inFlightRefresh ?? refreshTokens();
+      const newAccess = await inFlightRefresh;
+      inFlightRefresh = null;
+      config.headers = config.headers || {};
+      config.headers.Authorization = `Bearer ${newAccess}`;
+      return api.request(config);
+    } catch (refreshErr) {
+      inFlightRefresh = null;
+      clearSession();
+      if (typeof window !== 'undefined') {
+        const next = window.location.pathname + window.location.search;
+        window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      }
+      return Promise.reject(refreshErr);
+    }
+  },
+);
+
+// ── Auth endpoints ───────────────────────────────────────────────────────
+export const login = (email, password) =>
+  axios
+    .post('/api/auth/login', { email, password }, { timeout: 10000 })
+    .then((r) => r.data);
+
+export const fetchMe = () => api.get('/auth/me').then((r) => r.data);
+
+export const logout = () => {
+  clearSession();
+  if (typeof window !== 'undefined') window.location.href = '/login';
+};
 
 export const getDashboard = () => api.get('/dashboard').then((r) => r.data);
 export const getTimeline = () => api.get('/dashboard/timeline').then((r) => r.data);
