@@ -73,9 +73,9 @@ export default function Page() {
             className="bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-xs text-white w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
-        <div>
-          <label className="block text-[11px] text-gray-400 mb-1">Filtro action</label>
-          <div role="radiogroup" className="flex flex-wrap gap-1">
+        <fieldset className="flex flex-col">
+          <legend className="text-[11px] text-gray-400 mb-1 px-0">Filtro action</legend>
+          <div role="radiogroup" aria-label="Filtro action" className="flex flex-wrap gap-1">
             {ACTION_PREFIXES.map((p) => (
               <button
                 key={p.key || 'all'}
@@ -93,7 +93,7 @@ export default function Page() {
               </button>
             ))}
           </div>
-        </div>
+        </fieldset>
         <span className="ml-auto text-[11px] text-gray-500" aria-live="polite">
           {total} eventi
         </span>
