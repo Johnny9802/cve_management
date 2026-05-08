@@ -21,6 +21,22 @@ const NAV = [
     ],
   },
   {
+    group: 'Workflow',
+    items: [
+      { href: '/findings',  label: 'Findings'  },
+      { href: '/webhooks',  label: 'Webhooks'  },
+      { href: '/inventory', label: 'Inventory' },
+    ],
+  },
+  {
+    group: 'Reports',
+    items: [
+      { href: '/reports/sla',   label: 'SLA'       },
+      { href: '/reports/mttr',  label: 'MTTR'      },
+      { href: '/reports/audit', label: 'Audit log' },
+    ],
+  },
+  {
     group: 'Operativo',
     items: [
       { href: '/?tab=dashboard', label: 'Inventory & CVE', legacy: true },
