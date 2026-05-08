@@ -13,11 +13,15 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.api.dependencies.auth import AuthUser, require_role
 from app.core.config import get_settings
+from app.services import audit
+
+_ADMIN = require_role("admin")
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -175,7 +179,11 @@ class ConfigUpdate(BaseModel):
 
 
 @router.patch("/config")
-async def update_config(body: ConfigUpdate, request: Request) -> dict:
+async def update_config(
+    body: ConfigUpdate,
+    request: Request,
+    user: AuthUser = Depends(_ADMIN),
+) -> dict:
     valid_keys = {c["key"] for c in _CONFIG_ITEMS}
     if body.key not in valid_keys:
         return JSONResponse(status_code=400, content={"error": f"Unknown config key: {body.key}"})
@@ -189,5 +197,20 @@ async def update_config(body: ConfigUpdate, request: Request) -> dict:
         with contextlib.suppress(Exception):
             request.app.state.opencve_client.settings.__dict__["opencve_api_key"] = body.value.strip()
 
-    logger.info("system.config_updated", key=body.key)
+    # The diff field carries the masked value — audit.mask_sensitive
+    # turns API keys / secrets into "***" so the audit log never holds
+    # plaintext credentials.
+    await audit.record(
+        request.app.state.db_pool,
+        action="system.config_update",
+        target_type="config",
+        target_id=body.key,
+        actor_email=user.email,
+        actor_role=user.role,
+        diff={"key": body.key, "value_set": bool(body.value)},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    logger.info("system.config_updated", key=body.key, actor=user.email)
     return {"ok": True, "key": body.key}

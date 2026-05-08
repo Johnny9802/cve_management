@@ -26,10 +26,13 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.dependencies.auth import AuthUser, require_role
 from app.services.audit import record_in_tx
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/findings", tags=["risk-acceptance"])
+
+_WRITER = require_role("analyst")
 
 
 def _get_pool(request: Request) -> asyncpg.Pool:
@@ -49,7 +52,11 @@ def _client_ip(request: Request) -> str | None:
 
 
 class RiskAcceptanceCreate(BaseModel):
-    requested_by: str = Field(min_length=1, max_length=200)
+    # ``requested_by`` is now ignored for authorization — the JWT
+    # subject is authoritative — but we keep it in the contract so the
+    # frontend can still send a free-form display name without
+    # breaking. The audit row uses user.email.
+    requested_by: str | None = Field(default=None, max_length=200)
     justification: str = Field(min_length=10, max_length=4000)
     expires_at: date
 
@@ -63,7 +70,9 @@ class RiskAcceptanceCreate(BaseModel):
 
 class RiskAcceptanceDecision(BaseModel):
     action: str = Field(pattern="^(approve|reject)$")
-    decided_by: str = Field(min_length=1, max_length=200)
+    # ``decided_by`` ignored for authorization (JWT is authoritative);
+    # kept optional for FE compatibility.
+    decided_by: str | None = Field(default=None, max_length=200)
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -77,7 +86,9 @@ async def create_risk_acceptance(
     body: RiskAcceptanceCreate,
     request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, Any]:
+    requested_by = user.email
     cve_id = cve_id.upper()
     async with pool.acquire() as conn:
         finding = await conn.fetchrow(
@@ -102,7 +113,7 @@ async def create_risk_acceptance(
                 RETURNING *
                 """,
                 finding["id"],
-                body.requested_by,
+                requested_by,
                 body.justification,
                 body.expires_at,
             )
@@ -111,8 +122,8 @@ async def create_risk_acceptance(
                 action="risk_acceptance.request",
                 target_type="finding",
                 target_id=f"{product_id}:{cve_id}",
-                actor_email=body.requested_by,
-                actor_role="requester",
+                actor_email=requested_by,
+                actor_role=user.role,
                 diff={
                     "after": {
                         "status": "pending",
@@ -134,8 +145,10 @@ async def decide_risk_acceptance(
     body: RiskAcceptanceDecision,
     request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, Any]:
     cve_id = cve_id.upper()
+    decided_by = user.email
     new_status = "approved" if body.action == "approve" else "rejected"
 
     async with pool.acquire() as conn:
@@ -158,10 +171,7 @@ async def decide_risk_acceptance(
             raise HTTPException(
                 409, f"already decided (status={existing['status']})"
             )
-        if (
-            new_status == "approved"
-            and existing["requested_by"] == body.decided_by
-        ):
+        if new_status == "approved" and existing["requested_by"] == decided_by:
             raise HTTPException(
                 409, "approver must differ from requester (segregation of duties)"
             )
@@ -178,7 +188,7 @@ async def decide_risk_acceptance(
                 """,
                 acceptance_id,
                 new_status,
-                body.decided_by,
+                decided_by,
             )
             if new_status == "approved":
                 await conn.execute(
@@ -198,7 +208,7 @@ async def decide_risk_acceptance(
                     """,
                     existing["finding_id"],
                     "open",
-                    body.decided_by,
+                    decided_by,
                     f"risk_acceptance.approve#{acceptance_id}",
                 )
             await record_in_tx(
@@ -206,7 +216,7 @@ async def decide_risk_acceptance(
                 action=f"risk_acceptance.{body.action}",
                 target_type="risk_acceptance",
                 target_id=str(acceptance_id),
-                actor_email=body.decided_by,
+                actor_email=decided_by,
                 actor_role="approver",
                 diff={
                     "before": {"status": "pending"},

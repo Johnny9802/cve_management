@@ -13,8 +13,13 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
+from app.api.dependencies.auth import AuthUser, require_role
+from app.services import audit
+
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+_WRITER = require_role("analyst")
 
 
 # ── request / response models ────────────────────────────────────────────────
@@ -88,9 +93,11 @@ async def list_products(pool: asyncpg.Pool = Depends(_get_pool)) -> list[dict]:
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_product(
     body: ProductCreate,
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict:
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         try:
             row = await conn.fetchrow(
                 """
@@ -108,6 +115,18 @@ async def create_product(
 
         job_id = await _enqueue_sync(conn, row["id"], priority=10)
 
+        await audit.record_in_tx(
+            conn,
+            action="product.create",
+            target_type="product",
+            target_id=str(row["id"]),
+            actor_email=user.email,
+            actor_role=user.role,
+            diff={"after": _product_row(row)},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+
     result = _product_row(row)
     result["syncing"] = job_id is not None
     return result
@@ -116,7 +135,9 @@ async def create_product(
 @router.post("/bulk")
 async def bulk_import(
     body: BulkProductCreate,
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict:
     created, skipped, errors = [], [], []
 
@@ -146,11 +167,34 @@ async def bulk_import(
             except Exception as exc:
                 errors.append({**p.model_dump(), "reason": str(exc)})
 
+    # One audit row per import batch keeps the audit_log readable;
+    # the diff carries counts so we can still trace what landed.
+    await audit.record(
+        pool,
+        action="product.bulk_import",
+        target_type="product",
+        target_id=None,
+        actor_email=user.email,
+        actor_role=user.role,
+        diff={
+            "counts": {
+                "created": len(created),
+                "skipped": len(skipped),
+                "errors": len(errors),
+            }
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"created": created, "skipped": skipped, "errors": errors}
 
 
 @router.post("/resync-all")
-async def resync_all(pool: asyncpg.Pool = Depends(_get_pool)) -> dict:
+async def resync_all(
+    request: Request,
+    pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
+) -> dict:
     rows = await pool.fetch("SELECT id, name, version FROM products ORDER BY name")
     if not rows:
         return {"message": "No products to sync", "count": 0}
@@ -162,6 +206,17 @@ async def resync_all(pool: asyncpg.Pool = Depends(_get_pool)) -> dict:
             if job_id:
                 enqueued += 1
 
+    await audit.record(
+        pool,
+        action="product.resync_all",
+        target_type="product",
+        target_id=None,
+        actor_email=user.email,
+        actor_role=user.role,
+        diff={"counts": {"enqueued": enqueued, "total": len(rows)}},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {
         "message": f"Enqueued {enqueued} product(s) for re-sync.",
         "count": enqueued,
@@ -174,8 +229,32 @@ async def delete_product(
     product_id: int,
     request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict:
-    await pool.execute("DELETE FROM products WHERE id = $1", product_id)
+    # Capture the row before delete so the audit diff has something to
+    # show. Without this the cascade wipes findings/history/risk_acc
+    # for this product and the audit_log is the only forensic trail.
+    async with pool.acquire() as conn, conn.transaction():
+        snapshot = await conn.fetchrow(
+            "SELECT id, name, vendor, version, cve_count, critical_count FROM products WHERE id = $1",
+            product_id,
+        )
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        await conn.execute("DELETE FROM products WHERE id = $1", product_id)
+        await audit.record_in_tx(
+            conn,
+            action="product.delete",
+            target_type="product",
+            target_id=str(product_id),
+            actor_email=user.email,
+            actor_role=user.role,
+            diff={"before": dict(snapshot)},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+
     from app.core.cache import delete_pattern
     await delete_pattern(request.app.state.redis, "dashboard:*")
     return {"deleted": True}
@@ -184,14 +263,27 @@ async def delete_product(
 @router.post("/{product_id}/sync")
 async def manual_sync(
     product_id: int,
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict:
     exists = await pool.fetchrow("SELECT id FROM products WHERE id = $1", product_id)
     if not exists:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         job_id = await _enqueue_sync(conn, product_id, priority=10)
+        await audit.record_in_tx(
+            conn,
+            action="product.sync",
+            target_type="product",
+            target_id=str(product_id),
+            actor_email=user.email,
+            actor_role=user.role,
+            diff={"job_id": job_id},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
 
     return {"syncing": True, "job_id": job_id}
 

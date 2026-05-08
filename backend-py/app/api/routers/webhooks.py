@@ -30,9 +30,13 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.dependencies.auth import AuthUser, require_role
 from app.core.config import Settings, get_settings
 from app.core.http import OpsecAwareClient
 from app.core.ssrf import SsrfBlockedError, assert_url_allowed
+from app.services import audit
+
+_WRITER = require_role("analyst")
 from app.services.webhooks import (
     ALLOWED_EVENT_TYPES,
     build_finding_event,
@@ -111,8 +115,10 @@ class WebhookUpdate(BaseModel):
 @router.post("")
 async def create_webhook(
     body: WebhookCreate,
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
     settings: Settings = Depends(get_settings),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, Any]:
     try:
         assert_url_allowed(body.url, allowlist=_get_allowlist(settings))
@@ -141,6 +147,17 @@ async def create_webhook(
     if row is None:
         raise HTTPException(500, "insert failed")
     out = dict(row)
+    await audit.record(
+        pool,
+        action="webhook.create",
+        target_type="webhook",
+        target_id=str(row["id"]),
+        actor_email=user.email,
+        actor_role=user.role,
+        diff={"after": {"url": body.url, "name": body.name, "events": body.event_types}},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return out
 
 
@@ -172,8 +189,10 @@ async def get_webhook(
 async def update_webhook(
     webhook_id: int,
     body: WebhookUpdate,
+    request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
     settings: Settings = Depends(get_settings),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, Any]:
     if body.url is not None:
         try:
@@ -204,16 +223,40 @@ async def update_webhook(
     )
     if row is None:
         raise HTTPException(404, "webhook not found")
+    await audit.record(
+        pool,
+        action="webhook.update",
+        target_type="webhook",
+        target_id=str(webhook_id),
+        actor_email=user.email,
+        actor_role=user.role,
+        diff={"after": body.model_dump(exclude_none=True)},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return public_view(row)
 
 
 @router.delete("/{webhook_id}")
 async def delete_webhook(
-    webhook_id: int, pool: asyncpg.Pool = Depends(_get_pool)
+    webhook_id: int,
+    request: Request,
+    pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, str]:
     result = await pool.execute("DELETE FROM webhooks WHERE id = $1", webhook_id)
     if result.endswith(" 0"):
         raise HTTPException(404, "webhook not found")
+    await audit.record(
+        pool,
+        action="webhook.delete",
+        target_type="webhook",
+        target_id=str(webhook_id),
+        actor_email=user.email,
+        actor_role=user.role,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"status": "deleted"}
 
 
@@ -222,6 +265,7 @@ async def test_webhook(
     webhook_id: int,
     pool: asyncpg.Pool = Depends(_get_pool),
     settings: Settings = Depends(get_settings),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict[str, Any]:
     """Send a synthetic ``finding.created_high_priority`` event right now.
 

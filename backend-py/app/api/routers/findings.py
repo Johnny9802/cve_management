@@ -15,10 +15,13 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from app.api.dependencies.auth import AuthUser, require_role
 from app.services.audit import record_in_tx
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/findings", tags=["findings"])
+
+_WRITER = require_role("analyst")
 
 _VALID_STATUSES = {"open", "in_review", "false_positive", "accepted_risk", "planned", "remediated", "closed"}
 
@@ -124,8 +127,12 @@ async def update_finding(
     body: FindingUpdate,
     request: Request,
     pool: asyncpg.Pool = Depends(_get_pool),
+    user: AuthUser = Depends(_WRITER),
 ) -> dict:
     cve_id = cve_id.upper()
+    # Authoritative actor is the JWT subject — anything in body.actor
+    # is a UX hint (not used for authorization, never trusted).
+    actor_email = user.email
 
     if body.status and body.status not in _VALID_STATUSES:
         raise HTTPException(
@@ -162,7 +169,7 @@ async def update_finding(
                     current["id"],
                     current["status"],
                     body.status,
-                    body.actor or "api",
+                    actor_email,
                     body.reason,
                 )
             # P9 — application-level audit log entry, atomic with the
@@ -175,8 +182,8 @@ async def update_finding(
                 ),
                 target_type="finding",
                 target_id=f"{product_id}:{cve_id}",
-                actor_email=body.actor,
-                actor_role="analyst",
+                actor_email=actor_email,
+                actor_role=user.role,
                 diff={
                     "before": {
                         "status": current["status"],
