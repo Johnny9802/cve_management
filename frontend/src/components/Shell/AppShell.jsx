@@ -14,6 +14,7 @@ import Sidebar from './Sidebar';
 import DashboardSwitcher from './DashboardSwitcher';
 import RefreshButton from '../UI/RefreshButton';
 import AuthGate from '../Auth/AuthGate';
+import ErrorBoundary from '../Shared/ErrorBoundary';
 import { logout } from '../../lib/api';
 import { getCurrentUser } from '../../lib/auth';
 
@@ -89,7 +90,9 @@ export default function AppShell({ title, subtitle, actions, onRefresh, lastRefr
                 {actions && <div className="flex items-center gap-2">{actions}</div>}
               </div>
             )}
-            <div data-refresh-key={refreshKey}>{children}</div>
+            <ErrorBoundary>
+              <div data-refresh-key={refreshKey}>{children}</div>
+            </ErrorBoundary>
           </main>
         </div>
       </div>

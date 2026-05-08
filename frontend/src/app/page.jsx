@@ -196,7 +196,15 @@ export default function Home() {
                 onSync={handleSyncProduct}
                 onAdd={() => setShowAddModal(true)}
               />
-              <SeverityChart data={stats?.severity || []} />
+              <SeverityChart
+                data={stats?.severity || []}
+                activeSeverity={filters.severity || null}
+                onSliceClick={(severity) =>
+                  handleKpiFilter({
+                    severity: filters.severity === severity ? '' : severity,
+                  })
+                }
+              />
             </div>
 
             <div className="lg:col-span-3 space-y-4">
@@ -258,7 +266,15 @@ export default function Home() {
                   <span aria-hidden className="text-xs opacity-60 group-open:rotate-180 transition-transform">▾</span>
                 </summary>
                 <div className="px-4 pb-4">
-                  <TimelineChart data={timeline} />
+                  <TimelineChart
+                    data={timeline}
+                    activeMonth={filters.year ? `${filters.year}-` : null}
+                    onBarClick={(monthKey) => {
+                      // monthKey format is "YYYY-MM"; we filter by year.
+                      const year = monthKey ? String(monthKey).slice(0, 4) : '';
+                      handleKpiFilter({ year: filters.year === year ? '' : year });
+                    }}
+                  />
                 </div>
               </details>
             </div>
