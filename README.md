@@ -277,7 +277,7 @@ cve-management/
 
 ## Decisioni di design (note dal rewrite)
 
-Il backend è un **rewrite Python** di un primo MVP Node.js (cartella `backend/` legacy). Il rewrite è stato un'opportunità per:
+Il backend è un **rewrite Python** di un primo MVP Node.js (la cartella `backend/` legacy è stata rimossa nel commit di hardening Sprint 1; resta nel `git log` per chi vuole confrontare). Il rewrite è stato un'opportunità per:
 
 - portare la logica di **version matching** preservandone i casi-limite (OpenSSL `1.0.2k`, pre-release `-rc1`, range `versionStartIncluding ≤ v < versionEndExcluding`)
 - introdurre `asyncpg` al posto del pool sync precedente (latency p95 sull'endpoint `/cves` ↓)
