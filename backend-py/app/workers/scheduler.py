@@ -165,6 +165,55 @@ def create_scheduler(
         next_run_time=datetime.utcnow(),
     )
 
+    # ── Queue-table cleanup (daily — DB-04, DB-05) ────────────────────
+    # ``sync_jobs`` and ``webhook_deliveries`` are write-once / never-read
+    # after completion. Without a janitor they grow indefinitely and slow
+    # every queue scan. Retention keeps:
+    #   * sync_jobs completed > 90d  → drop
+    #   * sync_jobs dead     > 30d   → drop
+    #   * webhook_deliveries delivered > 90d → drop
+    async def _queue_cleanup() -> None:
+        log = logger.bind(job="queue_cleanup")
+        try:
+            async with db_pool.acquire() as conn:
+                done = await conn.execute(
+                    """
+                    DELETE FROM sync_jobs
+                    WHERE status = 'completed'
+                      AND completed_at < NOW() - INTERVAL '90 days'
+                    """
+                )
+                dead = await conn.execute(
+                    """
+                    DELETE FROM sync_jobs
+                    WHERE status = 'dead'
+                      AND completed_at < NOW() - INTERVAL '30 days'
+                    """
+                )
+                deliv = await conn.execute(
+                    """
+                    DELETE FROM webhook_deliveries
+                    WHERE delivered_at IS NOT NULL
+                      AND delivered_at < NOW() - INTERVAL '90 days'
+                    """
+                )
+            log.info(
+                "scheduler.queue_cleanup.done",
+                sync_jobs_completed=int(done.split()[-1]) if done else 0,
+                sync_jobs_dead=int(dead.split()[-1]) if dead else 0,
+                webhook_deliveries=int(deliv.split()[-1]) if deliv else 0,
+            )
+        except Exception as exc:
+            log.error("scheduler.queue_cleanup.error", error=str(exc), exc_info=True)
+
+    scheduler.add_job(
+        _queue_cleanup,
+        trigger=IntervalTrigger(hours=24),
+        id="queue_cleanup",
+        replace_existing=True,
+        next_run_time=datetime.utcnow(),
+    )
+
     # ── sync_jobs DB queue poller ─────────────────────────────────────
     async def _sync_job_poll() -> None:
         try:
