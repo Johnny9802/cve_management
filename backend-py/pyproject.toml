@@ -1,3 +1,14 @@
+[build-system]
+# Minimal build backend so ``uv sync`` recognises the workspace as a
+# project and resolves the dependency lockfile correctly even when we
+# pass ``--no-install-project`` (the project source isn't present in
+# the builder stage).
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
 [project]
 name = "cve-management"
 version = "0.1.0"

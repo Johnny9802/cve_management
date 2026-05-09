@@ -22,29 +22,22 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Pull the uv binary from the official Astral image (pinned to :latest;
-# pin to a version tag like :0.4.0 in stricter environments).
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# Pull the uv binary from the official Astral image. Pinned to a
+# specific tag so reproducible builds don't drift on a silent uv
+# release; bump together with uv.lock when upgrading.
+COPY --from=ghcr.io/astral-sh/uv:0.4.18 /uv /usr/local/bin/uv
 
 # Create the target venv at the canonical /opt/venv path used by runtime.
 RUN uv venv /opt/venv
 
-# Copy ONLY pyproject.toml so dep layer is cached when project code changes.
-COPY pyproject.toml ./
+# Sprint 4 / S4.4: deps are installed from the committed uv.lock for
+# byte-identical builds. Without --frozen, uv would happily resolve
+# from pyproject.toml again and the lock becomes a lie.
+COPY pyproject.toml uv.lock ./
 
-# Install runtime deps into /opt/venv. We use `uv pip install` reading the
-# deps via Python's tomllib (always present in 3.11+). This is more robust
-# than `uv sync` for projects without a [build-system] table or a
-# committed uv.lock — `uv sync` silently installs nothing in that case.
-# When a uv.lock is committed, switch to:
-#   COPY pyproject.toml uv.lock ./
-#   RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --no-install-project
-ENV VIRTUAL_ENV=/opt/venv
-RUN python3 -c "import tomllib; \
-        print('\n'.join(tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']))" \
-    > /tmp/requirements.txt && \
-    uv pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
+ENV VIRTUAL_ENV=/opt/venv \
+    UV_PROJECT_ENVIRONMENT=/opt/venv
+RUN uv sync --frozen --no-dev --no-install-project
 
 # ── Stage 2: runtime image ─────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime

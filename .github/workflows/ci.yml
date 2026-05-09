@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: write
+  security-events: write   # Sprint 4 / S4.3: push SARIF to Security tab
+
 jobs:
   backend-quality:
     name: Backend quality (ruff + mypy)
@@ -203,3 +208,163 @@ jobs:
           name: playwright-trace
           path: frontend/playwright-report
           retention-days: 7
+
+  supply-chain:
+    name: Supply chain (gitleaks + pip-audit + npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks needs history
+
+      # Sprint 4 / S4.3: scan the diff for committed secrets. Empty
+      # baseline = scan everything; a future ``.gitleaks.toml`` can
+      # whitelist false positives if needed.
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+
+      - name: pip-audit (backend deps)
+        run: |
+          python -m pip install --quiet pip-audit
+          pip-audit --requirement <(python -c "import tomllib; \
+            print('\n'.join(tomllib.load(open('backend-py/pyproject.toml','rb'))['project']['dependencies']))") \
+            --format json --output pip-audit.json || true
+          # Soft fail for now — hard-fail once the report is clean.
+          pip-audit --requirement <(python -c "import tomllib; \
+            print('\n'.join(tomllib.load(open('backend-py/pyproject.toml','rb'))['project']['dependencies']))") \
+            || echo "pip-audit found vulnerabilities (non-blocking)"
+        continue-on-error: true
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: "npm", cache-dependency-path: frontend/package-lock.json }
+
+      - name: npm audit (frontend deps)
+        working-directory: frontend
+        run: npm audit --audit-level=high || echo "npm audit reported issues (non-blocking)"
+        continue-on-error: true
+
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit
+          path: pip-audit.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+  images:
+    name: Build, scan, push images
+    runs-on: ubuntu-latest
+    # Build on every PR (smoke check); push only when landing on main.
+    needs: [backend-quality, backend-tests, frontend-build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image refs
+        id: meta
+        run: |
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+          echo "backend_image=ghcr.io/${REPO_LC}/backend"  >> "$GITHUB_OUTPUT"
+          echo "frontend_image=ghcr.io/${REPO_LC}/frontend" >> "$GITHUB_OUTPUT"
+          # ``main`` builds use ``latest`` + the SHA; PRs use ``pr-<num>``
+          # and never push.
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            echo "tag=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Backend image ────────────────────────────────────────────
+      - name: Build backend image (load locally for scan)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend-py
+          load: true
+          tags: |
+            ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.backend_image }}:latest
+
+      - name: Trivy scan (backend)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.tag }}
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 0   # report; do not gate yet
+        continue-on-error: true
+
+      - name: Push backend image
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend-py
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.backend_image }}:latest
+
+      # ── Frontend image ───────────────────────────────────────────
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          load: true
+          tags: |
+            ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.frontend_image }}:latest
+
+      - name: Trivy scan (frontend)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.tag }}
+          format: sarif
+          output: trivy-frontend.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: 0
+        continue-on-error: true
+
+      - name: Push frontend image
+        if: steps.meta.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.frontend_image }}:latest
+
+      # Single SARIF upload step combining both scans.
+      - name: Upload Trivy SARIF (backend)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-backend.sarif
+          category: trivy-backend
+
+      - name: Upload Trivy SARIF (frontend)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-frontend.sarif
+          category: trivy-frontend

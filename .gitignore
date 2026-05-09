@@ -60,3 +60,4 @@ redis_data/
 *.so
 *.dylib
 *.exe
+backups/
