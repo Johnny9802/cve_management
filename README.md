@@ -277,6 +277,11 @@ cve-management/
 
 ## Decisioni di design (note dal rewrite)
 
+> **Operational docs.** See `docs/OPERATIONS.md`, `docs/RUNBOOK.md`,
+> `docs/ARCHITECTURE.md`, `docs/DEPLOY.md`, and `CHANGELOG.md` for the
+> production posture, incident playbook, architecture overview, and
+> deploy patterns.
+
 Il backend è un **rewrite Python** di un primo MVP Node.js (la cartella `backend/` legacy è stata rimossa nel commit di hardening Sprint 1; resta nel `git log` per chi vuole confrontare). Il rewrite è stato un'opportunità per:
 
 - portare la logica di **version matching** preservandone i casi-limite (OpenSSL `1.0.2k`, pre-release `-rc1`, range `versionStartIncluding ≤ v < versionEndExcluding`)
