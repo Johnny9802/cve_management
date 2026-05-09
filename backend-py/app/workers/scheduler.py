@@ -46,8 +46,24 @@ def create_scheduler(
     opencve_client: OpenCveClient,
     circuit_breakers: dict[str, CircuitBreaker],
     vulnx_client: VulnxClient | None = None,
+    leader=None,  # type: ignore[no-untyped-def]
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
+
+    # Sprint 4 / S4.8: leader election. Cron jobs that hit upstream APIs
+    # or write singleton tables (sync_state checkpoints, exec_snapshots)
+    # MUST run exactly once per cluster. We gate them with a closure
+    # that short-circuits when this replica isn't the leader. Per-replica
+    # jobs (sync_jobs queue poller, webhook delivery poller) keep running
+    # everywhere — they already use FOR UPDATE SKIP LOCKED.
+    def _leader_only(coro_factory):
+        async def _runner() -> None:
+            if leader is not None and not leader.is_leader:
+                logger.debug("scheduler.skipped.not_leader", job=coro_factory.__name__)
+                return
+            await coro_factory()
+        _runner.__name__ = coro_factory.__name__
+        return _runner
 
     # ── delta sync ────────────────────────────────────────────────────
     async def _delta_sync() -> None:
@@ -71,7 +87,7 @@ def create_scheduler(
             log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _delta_sync,
+        _leader_only(_delta_sync),
         trigger=IntervalTrigger(hours=settings.delta_sync_interval_hours),
         id="delta_sync",
         replace_existing=True,
@@ -94,7 +110,7 @@ def create_scheduler(
             log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _epss_refresh,
+        _leader_only(_epss_refresh),
         trigger=IntervalTrigger(hours=settings.epss_refresh_interval_hours),
         id="epss_refresh",
         replace_existing=True,
@@ -117,7 +133,7 @@ def create_scheduler(
             log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _kev_refresh,
+        _leader_only(_kev_refresh),
         trigger=IntervalTrigger(hours=settings.kev_refresh_interval_hours),
         id="kev_refresh",
         replace_existing=True,
@@ -158,7 +174,7 @@ def create_scheduler(
             log.error("scheduler.retention.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _retention_cleanup,
+        _leader_only(_retention_cleanup),
         trigger=IntervalTrigger(hours=24),
         id="retention_cleanup",
         replace_existing=True,
@@ -207,7 +223,7 @@ def create_scheduler(
             log.error("scheduler.queue_cleanup.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _queue_cleanup,
+        _leader_only(_queue_cleanup),
         trigger=IntervalTrigger(hours=24),
         id="queue_cleanup",
         replace_existing=True,
@@ -249,7 +265,7 @@ def create_scheduler(
             log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _daily_snapshot,
+        _leader_only(_daily_snapshot),
         trigger=IntervalTrigger(hours=24),
         id="daily_snapshot",
         replace_existing=True,
@@ -274,7 +290,7 @@ def create_scheduler(
             log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
     scheduler.add_job(
-        _expire_risk_acceptances,
+        _leader_only(_expire_risk_acceptances),
         trigger=IntervalTrigger(hours=24),
         id="expire_risk_acceptances",
         replace_existing=True,
@@ -336,7 +352,7 @@ def create_scheduler(
                 log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
         scheduler.add_job(
-            _vulnx_refresh,
+            _leader_only(_vulnx_refresh),
             trigger=IntervalTrigger(hours=settings.vulnx_refresh_interval_hours),
             id="vulnx_refresh",
             replace_existing=True,
@@ -355,7 +371,7 @@ def create_scheduler(
                 log.error("scheduler.job.error", error=str(exc), exc_info=True)
 
         scheduler.add_job(
-            _opencve_poll,
+            _leader_only(_opencve_poll),
             trigger=IntervalTrigger(hours=settings.delta_sync_interval_hours),
             id="opencve_poll",
             replace_existing=True,

@@ -33,6 +33,7 @@ from app.api.routers import webhooks as webhooks_router
 from app.core.cache import create_redis
 from app.core.config import get_settings
 from app.core.db import create_pool
+from app.core.leader import LeaderElector
 from app.core.logging import configure_logging
 from app.core.sentry import init_sentry
 from app.core.metrics import MetricsRegistry
@@ -159,6 +160,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             hint="Set VULNX_API_KEY to enable exploitability refresh",
         )
 
+    # Sprint 4 / S4.8: leader election. Try once at startup; the
+    # background refresh task takes over from there. Cron jobs gate
+    # themselves on ``leader.is_leader`` via the ``_leader_only``
+    # wrapper inside ``create_scheduler``. Running with a single
+    # replica? ``acquire`` succeeds and the lock is just a sanity
+    # checkpoint. Running with N replicas? Exactly one of them runs
+    # the cron jobs at any given time.
+    leader = LeaderElector(app.state.redis)
+    await leader.acquire()
+    leader.start_background_refresh()
+    app.state.leader = leader
+    logger.info(
+        "startup.leader_status",
+        is_leader=leader.is_leader,
+        node=leader.node_id,
+    )
+
     scheduler = create_scheduler(
         settings=settings,
         db_pool=app.state.db_pool,
@@ -170,6 +188,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         opencve_client=opencve_client,
         vulnx_client=vulnx_client,
         circuit_breakers=circuit_breakers,
+        leader=leader,
     )
     scheduler.start()
     app.state.scheduler = scheduler
@@ -184,6 +203,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("shutdown.begin")
     app.state.scheduler.shutdown(wait=False)
+    # Release the leader lock so a peer can take over without waiting
+    # for the 30s TTL.
+    leader = getattr(app.state, "leader", None)
+    if leader is not None:
+        await leader.stop_background_refresh()
+        await leader.release()
 
     # Drain any in-flight Tier 4 background tasks before closing pools.
     pending = list(getattr(app.state, "background_tasks", []))
