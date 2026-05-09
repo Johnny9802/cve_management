@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0
 
+    # ── Encryption keys (Sprint 4 — S4.7) ────────────────────────────────
+    # Symmetric key used by PGCrypto's pgp_sym_encrypt/_decrypt to keep
+    # webhook signing secrets ciphered at rest. Empty in dev = the
+    # application falls back to plaintext mode (logged once at startup).
+    # Generate with:  python -c "import secrets; print(secrets.token_urlsafe(48))"
+    webhook_enc_key: str = ""
+
     @property
     def nvd_request_delay(self) -> float:
         if self.nvd_api_key:

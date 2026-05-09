@@ -122,8 +122,15 @@ def _next_attempt_delay(next_attempt_idx: int) -> float:
 async def _fetch_webhook_target(
     pool: asyncpg.Pool, webhook_id: int
 ) -> asyncpg.Record | None:
+    # ``secret_encrypted`` is the Sprint-4 column; ``secret`` is kept
+    # for the dual-read window. resolve_secret picks the right one.
     return await pool.fetchrow(
-        "SELECT id, url, secret, enabled FROM webhooks WHERE id = $1", webhook_id
+        """
+        SELECT id, url, secret, secret_encrypted, enabled
+        FROM webhooks
+        WHERE id = $1
+        """,
+        webhook_id,
     )
 
 
@@ -173,8 +180,20 @@ async def _attempt_delivery(
         "User-Agent": "cve-management-webhook/1.0",
         "X-Webhook-Delivery-Id": str(delivery_id),
     }
-    if target["secret"]:
-        headers["X-Signature"] = sign(body, target["secret"])
+    # Sprint 4 / S4.7: prefer the encrypted column, fall back to legacy
+    # plaintext during the dual-read window.
+    from app.services.crypto import CryptoError, CryptoNotConfigured
+    from app.services.webhooks import resolve_secret
+    try:
+        plaintext_secret = resolve_secret(target, enc_key=settings.webhook_enc_key)
+    except (CryptoError, CryptoNotConfigured) as err:
+        await _record_failure(
+            pool, delivery, status_code=None,
+            error=f"webhook_secret_unreadable:{type(err).__name__}",
+        )
+        return False
+    if plaintext_secret:
+        headers["X-Signature"] = sign(body, plaintext_secret)
 
     async with OpsecAwareClient(
         provider="webhook",

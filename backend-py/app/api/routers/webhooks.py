@@ -112,6 +112,27 @@ class WebhookUpdate(BaseModel):
 
 # ─────────────────────────────────────────────────────────── routes
 
+def _enc_key_or_raise(settings: Settings) -> str:
+    """Return the webhook encryption key or 503 if not configured.
+
+    Sprint 4 / S4.7: the legacy plaintext column was dropped in
+    alembic 0012, so the application has no place to put a secret
+    without a key. Refusing the write is correct — silently failing
+    open would be a security regression.
+    """
+    key = settings.webhook_enc_key
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "WEBHOOK_ENC_KEY is not configured; webhook secrets cannot be "
+                "stored. Generate one with: python -c \"from cryptography.fernet "
+                "import Fernet; print(Fernet.generate_key().decode())\""
+            ),
+        )
+    return key
+
+
 @router.post("")
 async def create_webhook(
     body: WebhookCreate,
@@ -126,16 +147,23 @@ async def create_webhook(
         raise HTTPException(status_code=400, detail=f"url_rejected:{exc}") from exc
 
     secret = body.secret or generate_secret()
+    enc_key = _enc_key_or_raise(settings)
 
+    # Sprint 4 / S4.7: secrets are written *only* into
+    # ``secret_encrypted``. The legacy plaintext column was dropped in
+    # alembic 0012; ``_enc_key_or_raise`` already rejected the call
+    # when the key is missing, so by here we always have one.
+    from app.services.crypto import encrypt as _encrypt
     row = await pool.fetchrow(
         """
-        INSERT INTO webhooks (name, url, secret, event_types, min_priority, enabled, created_by)
+        INSERT INTO webhooks
+            (name, url, secret_encrypted, event_types, min_priority, enabled, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
         """,
         body.name,
         body.url,
-        secret,
+        _encrypt(secret, key=enc_key),
         body.event_types,
         body.min_priority,
         body.enabled,
@@ -147,6 +175,8 @@ async def create_webhook(
     if row is None:
         raise HTTPException(500, "insert failed")
     out = dict(row)
+    out["secret"] = secret  # surface the plaintext one time only
+    out.pop("secret_encrypted", None)
     await audit.record(
         pool,
         action="webhook.create",
@@ -200,26 +230,37 @@ async def update_webhook(
         except SsrfBlockedError as exc:
             raise HTTPException(status_code=400, detail=f"url_rejected:{exc}") from exc
 
+    # Sprint 4 / S4.7: rotation rewrites secret_encrypted only.
+    new_enc: bytes | None = None
+    if body.secret is not None:
+        enc_key = _enc_key_or_raise(settings)
+        from app.services.crypto import encrypt as _encrypt
+        new_enc = _encrypt(body.secret, key=enc_key)
+
     row = await pool.fetchrow(
         """
         UPDATE webhooks
-        SET name         = COALESCE($2, name),
-            url          = COALESCE($3, url),
-            secret       = COALESCE($4, secret),
-            event_types  = COALESCE($5, event_types),
-            min_priority = COALESCE($6, min_priority),
-            enabled      = COALESCE($7, enabled),
-            updated_at   = NOW()
+        SET name             = COALESCE($2, name),
+            url              = COALESCE($3, url),
+            secret_encrypted = CASE
+                                   WHEN $7::bool THEN $8
+                                   ELSE secret_encrypted
+                               END,
+            event_types      = COALESCE($4, event_types),
+            min_priority     = COALESCE($5, min_priority),
+            enabled          = COALESCE($6, enabled),
+            updated_at       = NOW()
         WHERE id = $1
         RETURNING *
         """,
         webhook_id,
         body.name,
         body.url,
-        body.secret,
         body.event_types,
         body.min_priority,
         body.enabled,
+        body.secret is not None,
+        new_enc,
     )
     if row is None:
         raise HTTPException(404, "webhook not found")
@@ -274,7 +315,8 @@ async def test_webhook(
     upstream status code.
     """
     row = await pool.fetchrow(
-        "SELECT id, url, secret FROM webhooks WHERE id = $1", webhook_id
+        "SELECT id, url, secret, secret_encrypted FROM webhooks WHERE id = $1",
+        webhook_id,
     )
     if row is None:
         raise HTTPException(404, "webhook not found")
@@ -283,6 +325,12 @@ async def test_webhook(
         assert_url_allowed(row["url"], allowlist=_get_allowlist(settings))
     except SsrfBlockedError as exc:
         raise HTTPException(400, f"url_rejected:{exc}") from exc
+
+    # Resolve the signing secret through the encrypted column first
+    # (Sprint 4 / S4.7); fall back to legacy plaintext for rows that
+    # pre-date the migration.
+    from app.services.webhooks import resolve_secret
+    plaintext_secret = resolve_secret(row, enc_key=settings.webhook_enc_key)
 
     payload = build_finding_event(
         event_type="finding.created_high_priority",
@@ -299,8 +347,8 @@ async def test_webhook(
         "Content-Type": "application/json",
         "User-Agent": "cve-management-webhook/1.0",
     }
-    if row["secret"]:
-        headers["X-Signature"] = sign(body, row["secret"])
+    if plaintext_secret:
+        headers["X-Signature"] = sign(body, plaintext_secret)
 
     async with OpsecAwareClient(
         provider="webhook",

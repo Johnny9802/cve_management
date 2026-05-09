@@ -70,6 +70,8 @@ def _product_row(row: asyncpg.Record) -> dict[str, Any]:
 
 @router.get("")
 async def list_products(pool: asyncpg.Pool = Depends(_get_pool)) -> list[dict]:
+    # Soft-delete (S4.6): the list endpoint never surfaces deleted
+    # rows. Audit / governance reads them through audit_log instead.
     rows = await pool.fetch(
         """
         SELECT p.id, p.name, p.version, p.vendor,
@@ -84,6 +86,7 @@ async def list_products(pool: asyncpg.Pool = Depends(_get_pool)) -> list[dict]:
           ON j.target_id = p.id::text
          AND j.job_type  = 'product_sync'
          AND j.status IN ('pending', 'running')
+        WHERE p.is_deleted = FALSE
         ORDER BY p.critical_count DESC, p.cve_count DESC, p.name ASC
         """
     )
@@ -231,18 +234,67 @@ async def delete_product(
     pool: asyncpg.Pool = Depends(_get_pool),
     user: AuthUser = Depends(_WRITER),
 ) -> dict:
-    # Capture the row before delete so the audit diff has something to
-    # show. Without this the cascade wipes findings/history/risk_acc
-    # for this product and the audit_log is the only forensic trail.
+    # Soft-delete (S4.6). The original cascade-DELETE wiped findings,
+    # findings_history and risk_acceptances on every removal — losing
+    # all the governance trail past the audit_log row. We now flip
+    # ``is_deleted`` and stamp the actor; reads filter the column
+    # away. Re-creating a (name, vendor, version) tuple is allowed
+    # thanks to the partial UNIQUE introduced in alembic 0011.
+    #
+    # Findings linked to the product are nudged to ``closed`` (with a
+    # history row) so the FSM contract stays consistent — they're no
+    # longer actionable, but the audit timeline keeps them.
     async with pool.acquire() as conn, conn.transaction():
         snapshot = await conn.fetchrow(
-            "SELECT id, name, vendor, version, cve_count, critical_count FROM products WHERE id = $1",
+            """
+            SELECT id, name, vendor, version, cve_count, critical_count, is_deleted
+            FROM products
+            WHERE id = $1
+            """,
             product_id,
         )
         if not snapshot:
             raise HTTPException(status_code=404, detail="Product not found")
+        if snapshot["is_deleted"]:
+            raise HTTPException(status_code=409, detail="Product already deleted")
 
-        await conn.execute("DELETE FROM products WHERE id = $1", product_id)
+        await conn.execute(
+            """
+            UPDATE products
+            SET is_deleted = TRUE,
+                deleted_at = NOW(),
+                deleted_by = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            """,
+            product_id,
+            user.email,
+        )
+
+        # Mark open findings as ``closed`` with a history row so the
+        # FSM stays auditable. Already-closed/remediated/etc are left
+        # alone.
+        affected = await conn.fetch(
+            """
+            UPDATE findings
+            SET status = 'closed', updated_at = NOW()
+            WHERE product_id = $1
+              AND status NOT IN ('closed', 'remediated', 'false_positive')
+            RETURNING id, status
+            """,
+            product_id,
+        )
+        for row in affected:
+            await conn.execute(
+                """
+                INSERT INTO findings_history
+                    (finding_id, old_status, new_status, changed_by, reason)
+                VALUES ($1, 'open', 'closed', $2, 'product soft-deleted')
+                """,
+                row["id"],
+                user.email,
+            )
+
         await audit.record_in_tx(
             conn,
             action="product.delete",
@@ -250,14 +302,18 @@ async def delete_product(
             target_id=str(product_id),
             actor_email=user.email,
             actor_role=user.role,
-            diff={"before": dict(snapshot)},
+            diff={
+                "before": {k: v for k, v in dict(snapshot).items() if k != "is_deleted"},
+                "after": {"is_deleted": True},
+                "findings_closed": len(affected),
+            },
             ip_address=request.client.host if request.client else None,
             user_agent=request.headers.get("user-agent"),
         )
 
     from app.core.cache import delete_pattern
     await delete_pattern(request.app.state.redis, "dashboard:*")
-    return {"deleted": True}
+    return {"deleted": True, "findings_closed": len(affected)}
 
 
 @router.post("/{product_id}/sync")

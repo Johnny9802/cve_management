@@ -14,6 +14,8 @@ from typing import Any
 import asyncpg
 import structlog
 
+from app.services import crypto
+
 logger = structlog.get_logger(__name__)
 
 
@@ -174,8 +176,26 @@ async def enqueue_delivery(
 
 
 def public_view(row: asyncpg.Record | dict[str, Any]) -> dict[str, Any]:
-    """Convert a webhook row into a JSON-friendly dict with masked secret."""
+    """Convert a webhook row into a JSON-friendly dict.
+    Drops the encrypted column entirely — readers have no business
+    seeing the ciphertext, and the FE never needs the cleartext after
+    the create response surfaced it once."""
     d = dict(row)
-    if "secret" in d:
-        d["secret"] = mask_secret(d["secret"])
+    d.pop("secret_encrypted", None)
     return d
+
+
+def resolve_secret(row: asyncpg.Record | dict[str, Any], *, enc_key: str) -> str | None:
+    """Return the plaintext signing secret from a webhook row.
+
+    Sprint 4 / S4.7: secrets live in ``secret_encrypted``. Returns
+    ``None`` if the column is empty (webhook without a signing
+    secret). Raises ``CryptoNotConfigured`` if a ciphertext exists
+    but no key is available — refusing to sign is correct, silent
+    fall-through would let an attacker bypass HMAC by forcing the
+    decrypt path to fail.
+    """
+    enc = row["secret_encrypted"] if "secret_encrypted" in row.keys() else None
+    if not enc:
+        return None
+    return crypto.decrypt(enc, key=enc_key)

@@ -77,6 +77,9 @@ services:
       # Observability (S3.6) — DSN empty = SDK in no-op mode.
       SENTRY_DSN:           ${SENTRY_DSN:-}
       SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.0}
+      # Encryption (S4.7) — empty = dev fallback to plaintext
+      # webhooks.secret. Set in production.
+      WEBHOOK_ENC_KEY:      ${WEBHOOK_ENC_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
